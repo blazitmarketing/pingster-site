@@ -31,6 +31,10 @@
     h1 { font-size: 24px; margin: 0 0 12px; }
     p { margin: 0 0 12px; }
     .muted { color: var(--muted); font-size: 15px; }
+    .open-app {
+      display: block; margin: 20px 0 8px; padding: 14px; border-radius: 8px; text-decoration: none;
+      background: var(--brand); color: #fff; font-weight: 700; text-align: center;
+    }
     [hidden] { display: none !important; }
   </style>
 </head>
@@ -44,6 +48,7 @@
       <h1>You're confirmed!</h1>
       <p>Your email address is verified.</p>
       <p>Go back to the Pingster app and sign in with your email and password.</p>
+      <a class="open-app" href="pingster://sign-in" hidden>Open Pingster</a>
       <p class="muted">You can close this page.</p>
     </section>
 
@@ -72,6 +77,10 @@
         history.replaceState(null, '', window.location.pathname);
       }
     })();
+    // On phones, offer a button straight back into the app (works once Pingster is installed from the store).
+    if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
+      document.querySelectorAll(".open-app").forEach(function (a) { a.hidden = false; });
+    }
   </script>
 </body>
 </html>
