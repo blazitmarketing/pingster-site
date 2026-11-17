@@ -3,84 +3,94 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="robots" content="noindex">
-  <title>Pingster</title>
+  <title>Pingster: every spot in the world has a story</title>
+  <meta name="description" content="Pingster is a free app for sharing photos and short videos pinned to the spot where they happened. Explore stories near you, find events, and get directions to any spot.">
+  <meta property="og:title" content="Pingster">
+  <meta property="og:description" content="Every spot in the world has a story. Explore photos, videos and events pinned to the map.">
+  <meta property="og:image" content="icon.png">
+  <link rel="icon" href="icon.png">
+  <link rel="apple-touch-icon" href="icon.png">
+  <script>
+    // Older account emails sent people here with sign-in details after a "#" or "?".
+    // Pass those straight to the confirmation page so the links keep working.
+    if (location.hash || location.search) location.replace('confirmed.html' + location.search + location.hash);
+  </script>
   <style>
     :root {
-      --brand: #1FB89A; --brand-dark: #138A73; --brand-light: #E8F7F3;
-      --text: #1B1F23; --muted: #5F6B76; --bg: #FFFFFF; --danger: #C62828;
+      --brand: #1FB89A; --brand-dark: #138A73; --brand-light: #E8F7F3; --mint: #A8EAD9;
+      --text: #1B1F23; --muted: #5F6B76; --bg: #FFFFFF; --card: #F6F8FA; --border: #DDE3E8;
     }
     @media (prefers-color-scheme: dark) {
-      :root { --text: #EEF2F4; --muted: #A9B4BD; --bg: #121619; --brand-light: #16302A; --brand-dark: #5FD6BC; --danger: #FF8A80; }
+      :root { --text: #EEF2F4; --muted: #A9B4BD; --bg: #121619; --card: #1B2126; --brand-light: #16302A; --brand-dark: #5FD6BC; --border: #3A444C; --mint: #1E4A40; }
     }
     * { box-sizing: border-box; }
-    body {
-      margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
-      padding: 24px 16px; background: var(--bg); color: var(--text);
-      font: 17px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    }
-    main { max-width: 420px; text-align: center; }
-    .logo { font-size: 30px; font-weight: 800; color: var(--brand); letter-spacing: -0.5px; margin: 0; }
-    .tagline { color: var(--muted); margin: 4px 0 32px; }
-    .badge {
-      width: 72px; height: 72px; border-radius: 50%; margin: 0 auto 20px;
-      display: flex; align-items: center; justify-content: center;
-      background: var(--brand-light); color: var(--brand-dark); font-size: 38px; font-weight: 700;
-    }
-    .badge.error { color: var(--danger); }
-    h1 { font-size: 24px; margin: 0 0 12px; }
-    p { margin: 0 0 12px; }
-    .muted { color: var(--muted); font-size: 15px; }
-    .open-app {
-      display: block; margin: 20px 0 8px; padding: 14px; border-radius: 8px; text-decoration: none;
-      background: var(--brand); color: #fff; font-weight: 700; text-align: center;
-    }
-    [hidden] { display: none !important; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 17px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    a { color: var(--brand-dark); }
+    .hero { position: relative; overflow: hidden; text-align: center; padding: 56px 16px 48px;
+            background: linear-gradient(180deg, #43CD99 0%, #66DF75 100%); color: #fff; }
+    .cloud { position: absolute; background: rgba(255,255,255,.28); border-radius: 60px; }
+    .cloud.a { width: 160px; height: 48px; top: 40px; left: -30px; }
+    .cloud.b { width: 120px; height: 38px; top: 110px; right: -20px; }
+    .icon { width: 120px; height: 120px; border-radius: 28px; box-shadow: 0 10px 30px rgba(0,0,0,.18); }
+    h1 { font-size: 46px; line-height: 1.05; margin: 18px 0 6px; letter-spacing: -1px; }
+    .tag { font-size: 21px; margin: 0 auto; max-width: 520px; opacity: .95; }
+    .soon { display: inline-flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-top: 28px; }
+    .store { display: inline-flex; flex-direction: column; align-items: flex-start; min-width: 170px; background: #111; color: #fff;
+             padding: 8px 18px 9px; border-radius: 12px; text-decoration: none; text-align: left; border: 1px solid rgba(255,255,255,.35); }
+    .store .small { font-size: 11px; letter-spacing: .3px; opacity: .85; }
+    .store .name { font-size: 21px; font-weight: 700; line-height: 1.1; }
+    a.store:hover { background: #000; }
+    main { max-width: 960px; margin: 0 auto; padding: 40px 16px 24px; }
+    .intro { text-align: center; max-width: 640px; margin: 0 auto 32px; font-size: 19px; color: var(--muted); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 22px; }
+    .card .big { font-size: 13px; font-weight: 800; letter-spacing: 1.5px; color: var(--brand-dark); }
+    .card h2 { font-size: 20px; margin: 4px 0 6px; }
+    .card p { margin: 0; color: var(--muted); font-size: 16px; }
+    .emoji { font-size: 30px; }
+    .safe { margin: 32px auto 0; max-width: 640px; text-align: center; background: var(--brand-light); border-radius: 16px; padding: 20px; }
+    footer { text-align: center; padding: 28px 16px 40px; color: var(--muted); font-size: 15px; }
+    footer nav { display: flex; flex-wrap: wrap; gap: 8px 20px; justify-content: center; margin-bottom: 10px; }
   </style>
 </head>
 <body>
+  <header class="hero">
+    <div class="cloud a"></div><div class="cloud b"></div>
+    <img class="icon" src="icon.png" alt="Pingster app icon" width="120" height="120">
+    <h1>Pingster</h1>
+    <p class="tag">Every spot in the world has a story.</p>
+    <!-- When Pingster is live, change each <span class="store"> to <a class="store" href="(store link)"> and remove "Coming soon". -->
+    <div class="soon">
+      <span class="store" aria-label="iPhone app on the App Store, coming soon">
+        <span class="small">Coming soon on the</span><span class="name">App Store</span>
+      </span>
+      <span class="store" aria-label="Android app on Google Play, coming soon">
+        <span class="small">Coming soon on</span><span class="name">Google Play</span>
+      </span>
+    </div>
+  </header>
+
   <main>
-    <p class="logo">Pingster</p>
-    <p class="tagline">Every spot in the world has a story</p>
-
-    <section id="ok">
-      <div class="badge" aria-hidden="true">&#10003;</div>
-      <h1>You're confirmed!</h1>
-      <p>Your email address is verified.</p>
-      <p>Go back to the Pingster app and sign in with your email and password.</p>
-      <a class="open-app" href="pingster://sign-in" hidden>Open Pingster</a>
-      <p class="muted">You can close this page.</p>
-    </section>
-
-    <section id="failed" hidden>
-      <div class="badge error" aria-hidden="true">!</div>
-      <h1>This link didn't work</h1>
-      <p>It may have expired, or it was already used.</p>
-      <p>Open the Pingster app and try signing in. If your email still isn't confirmed,
-         sign up again to get a fresh link.</p>
-    </section>
+    <p class="intro">Photos and short videos, pinned to the exact spot where they happened. Discover the stories around you, wherever you are.</p>
+    <div class="grid">
+      <div class="card"><div class="emoji">🧭</div><div class="big">EXPLORE</div><h2>Stories near you</h2><p>See what people have shared around you, from 1/4 mile to 50 miles away.</p></div>
+      <div class="card"><div class="emoji">🗺️</div><div class="big">DISCOVER</div><h2>The story map</h2><p>Every story is a pin. Zoom anywhere in the world and look around.</p></div>
+      <div class="card"><div class="emoji">📍</div><div class="big">NAVIGATE</div><h2>Take me there</h2><p>Love a spot? One tap gives you directions to where the picture was taken.</p></div>
+      <div class="card"><div class="emoji">🔎</div><div class="big">FIND</div><h2>Any town or place</h2><p>Search a town, state or country, a place name, a #hashtag or a person.</p></div>
+      <div class="card"><div class="emoji">📅</div><div class="big">GO</div><h2>Events nearby</h2><p>Concerts, fairs and festivals happening around you. Tap “I’m going” and add them to your calendar.</p></div>
+      <div class="card"><div class="emoji">📸</div><div class="big">SHARE</div><h2>Your own stories</h2><p>Pin your photos and videos to the spot where they happened, and share them with friends.</p></div>
+    </div>
+    <div class="safe">Every new story and event is checked before it appears, and you can report or block anyone. Pingster is free, for people 13 and older.</div>
   </main>
 
-  <script>
-    // Pingster's sign-in service sends people here after they tap the link in their email.
-    // The address may carry sign-in details after a "#". This page never reads or keeps them:
-    // it only checks whether the link failed, then wipes them from the address bar so they
-    // aren't saved in browser history or shared by accident.
-    (function () {
-      var hash = window.location.hash || '';
-      var query = window.location.search || '';
-      if (/(^|[#&?])error(_code|_description)?=/.test(hash + query)) {
-        document.getElementById('ok').hidden = true;
-        document.getElementById('failed').hidden = false;
-      }
-      if (hash || query) {
-        history.replaceState(null, '', window.location.pathname);
-      }
-    })();
-    // On phones, offer a button straight back into the app (works once Pingster is installed from the store).
-    if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
-      document.querySelectorAll(".open-app").forEach(function (a) { a.hidden = false; });
-    }
-  </script>
+  <footer>
+    <nav>
+      <a href="privacy.html">Privacy policy</a>
+      <a href="support.html">Help &amp; support</a>
+      <a href="delete-account.html">Delete your account</a>
+      <a href="mailto:support@pingsterapp.com">support@pingsterapp.com</a>
+    </nav>
+    © Pingster
+  </footer>
 </body>
 </html>
