@@ -108,6 +108,7 @@
     #selBar { position: fixed; left: 0; right: 0; bottom: 0; display: flex; gap: 12px; align-items: center; justify-content: center; padding: 14px; background: var(--bg); border-top: 1px solid var(--border); box-shadow: 0 -4px 12px rgba(0,0,0,.08); z-index: 1000; }
     #selAct { background: var(--danger); }
     #selAct.restore { background: var(--brand); }
+    #selDel, #vDelete { background: var(--danger); }
 
     @media (max-width: 800px) {
       #app { grid-template-columns: 1fr; height: auto; }
@@ -186,14 +187,16 @@
     </div>
     <input id="rFilter" placeholder="Filter by place, town or words">
     <span id="rCount" class="muted"></span>
+    <button class="alt" id="selAll">Select all shown</button>
   </div>
-  <p class="muted" style="margin:0 0 10px">Click a picture to see it big (and fix its name or story). To remove several at once, click the circle in each picture's corner. Removed stories disappear from the app but can be restored from the Removed list.</p>
+  <p class="muted" style="margin:0 0 10px">Click a picture to see it big (and fix its name or story). To remove several at once, click the circle in each picture's corner. Removing <b>your own</b> stories deletes them for good (picture and all). Removing someone else's story hides it from the app (it stays in the Removed list so you can restore it).</p>
   <div id="grid"></div>
   <p id="rMore" class="muted"></p>
   <div id="selBar" class="hidden">
     <strong id="selCount"></strong>
     <button class="alt" id="selNone">Unselect all</button>
     <button id="selAct"></button>
+    <button id="selDel" class="hidden"></button>
   </div>
 </section>
 
@@ -223,6 +226,7 @@
     <div class="vbtns">
       <button id="vSave">Save changes</button>
       <button id="vRemove"></button>
+      <button id="vDelete" class="hidden">Delete for good</button>
     </div>
     <div id="vMsg"></div>
     <p class="muted" style="font-size:13px;margin-top:auto">Click the photo to zoom to full size; drag the scroll bars or use the mouse wheel to look around. Keys: ← → to move, Esc to close.</p>
@@ -811,6 +815,21 @@ async function signThumbs(rows) {
   }
 }
 
+/** Deletes one of your own stories for good: the story, then its picture files. */
+async function deleteForGood(r) {
+  let extra = [];
+  try { extra = (await api(`/rest/v1/post_photos?select=media_path&post_id=eq.${r.id}`)).map((x) => x.media_path); } catch { /* none */ }
+  const gone = await api(`/rest/v1/posts?id=eq.${r.id}`, { method: 'DELETE', headers: { Prefer: 'return=representation' } });
+  if (!gone || !gone.length) throw new Error('not deleted');
+  await removeFiles([r.media_path, r.thumb_path, ...extra].filter(Boolean));
+}
+const isMine = (r) => r && r.author_id === session.uid;
+/** Your own stories are deleted for good; other people's are hidden (moderation). */
+async function removeOrDelete(r) {
+  if (isMine(r)) await deleteForGood(r);
+  else await rpc('moderate', { kind: 'post', target: r.id, decision: 'remove', note: 'desktop review' });
+}
+
 function updateSel() {
   const n = review.sel.size;
   $('selBar').classList.toggle('hidden', !n);
@@ -818,7 +837,30 @@ function updateSel() {
   const restore = review.show === 'removed';
   $('selAct').textContent = restore ? `Restore ${n}` : `Remove ${n} from the app`;
   $('selAct').classList.toggle('restore', restore);
+  // In the Removed list, your own stories can also be deleted for good.
+  const mineSel = review.rows.filter((r) => review.sel.has(r.id) && isMine(r)).length;
+  $('selDel').classList.toggle('hidden', !restore || !mineSel);
+  $('selDel').textContent = `Delete ${mineSel} of mine for good`;
 }
+$('selAll').addEventListener('click', () => {
+  if (review.busy) return;
+  for (const r of visibleRows()) review.sel.add(r.id);
+  renderGrid(); updateSel();
+});
+$('selDel').addEventListener('click', async () => {
+  const rows = review.rows.filter((r) => review.sel.has(r.id) && isMine(r));
+  if (!rows.length) return;
+  if (!await ask(`Delete ${rows.length} of your stories for good? The pictures are erased too. This can't be undone.`)) return;
+  review.busy = true; $('selDel').disabled = true;
+  let ok = 0, failed = 0;
+  for (const [n, r] of rows.entries()) {
+    $('selCount').textContent = `Deleting ${n + 1} of ${rows.length}…`;
+    try { await deleteForGood(r); review.rows = review.rows.filter((x) => x.id !== r.id); review.sel.delete(r.id); ok++; } catch { failed++; }
+  }
+  review.busy = false; $('selDel').disabled = false;
+  renderGrid(); updateSel();
+  tell(`${ok} deleted for good${failed ? `, ${failed} failed (still selected, try again)` : ''}.`);
+});
 $('selNone').addEventListener('click', () => { review.sel.clear(); renderGrid(); updateSel(); });
 $('selAct').addEventListener('click', async () => {
   const ids = [...review.sel];
@@ -826,13 +868,21 @@ $('selAct').addEventListener('click', async () => {
   if (!ids.length) return;
   if (!await ask(restore
     ? `Put ${ids.length} ${ids.length === 1 ? 'story' : 'stories'} back on the map?`
-    : `Remove ${ids.length} ${ids.length === 1 ? 'story' : 'stories'} from the app? (You can restore them later from the Removed list.)`)) return;
+    : (() => {
+        const mine = review.rows.filter((r) => ids.includes(r.id) && isMine(r)).length;
+        const others = ids.length - mine;
+        return [
+          mine ? `${mine} of your own ${mine === 1 ? 'story' : 'stories'} will be deleted for good, pictures too. This can't be undone.` : '',
+          others ? `${others} posted by other people will be hidden from the app (you can restore those from the Removed list).` : '',
+        ].filter(Boolean).join(' ') + ' Go ahead?';
+      })())) return;
   review.busy = true; $('selAct').disabled = true;
   let ok = 0, failed = 0;
   for (const [n, id] of ids.entries()) {
     $('selCount').textContent = `${restore ? 'Restoring' : 'Removing'} ${n + 1} of ${ids.length}…`;
     try {
-      await rpc('moderate', { kind: 'post', target: id, decision: restore ? 'keep' : 'remove', note: 'desktop review' });
+      if (restore) await rpc('moderate', { kind: 'post', target: id, decision: 'keep', note: 'desktop review' });
+      else await removeOrDelete(review.rows.find((r) => r.id === id));
       review.rows = review.rows.filter((r) => r.id !== id);
       review.sel.delete(id);
       ok++;
@@ -883,8 +933,9 @@ async function showStory(id) {
   $('vTitle').disabled = $('vDesc').disabled = !mine;
   $('vSave').classList.toggle('hidden', !mine);
   const restore = review.show === 'removed';
-  $('vRemove').textContent = restore ? 'Restore to the app' : 'Remove from the app';
+  $('vRemove').textContent = restore ? 'Restore to the app' : mine ? 'Delete for good' : 'Remove from the app';
   $('vRemove').classList.toggle('restore', restore);
+  $('vDelete').classList.toggle('hidden', !(restore && mine));
   $('vMsg').textContent = mine ? '' : 'Someone else posted this, so its words can’t be changed here.';
   $('vMsg').style.color = '';
   $('vPic').classList.remove('zoomed');
@@ -935,24 +986,31 @@ $('vSave').addEventListener('click', async () => {
   }
   $('vSave').disabled = false;
 });
-$('vRemove').addEventListener('click', async () => {
+async function viewerAct(kind) {
   const id = viewer.id;
-  const restore = review.show === 'removed';
-  $('vRemove').disabled = true;
+  const r = review.rows.find((x) => x.id === id);
+  const restore = kind === 'restore';
+  const deleting = kind === 'delete' || (!restore && isMine(r));
+  if (deleting && !await ask('Delete this story for good? The picture is erased too. This can\'t be undone.')) return;
+  $('vRemove').disabled = $('vDelete').disabled = true;
   try {
-    await rpc('moderate', { kind: 'post', target: id, decision: restore ? 'keep' : 'remove', note: 'desktop review' });
+    if (restore) await rpc('moderate', { kind: 'post', target: id, decision: 'keep', note: 'desktop review' });
+    else if (deleting) await deleteForGood(r);
+    else await rpc('moderate', { kind: 'post', target: id, decision: 'remove', note: 'desktop review' });
     const i = viewer.list.indexOf(id);
     review.rows = review.rows.filter((r) => r.id !== id);
     review.sel.delete(id);
     viewer.list.splice(i, 1);
     renderGrid(); updateSel();
     if (!viewer.list.length) closeViewer();
-    else { await showStory(viewer.list[Math.min(i, viewer.list.length - 1)]); $('vMsg').textContent = restore ? '✓ Restored. Showing the next one.' : '✓ Removed. Showing the next one.'; $('vMsg').style.color = 'var(--brand-dark)'; }
+    else { await showStory(viewer.list[Math.min(i, viewer.list.length - 1)]); $('vMsg').textContent = restore ? '✓ Restored. Showing the next one.' : deleting ? '✓ Deleted for good. Showing the next one.' : '✓ Removed. Showing the next one.'; $('vMsg').style.color = 'var(--brand-dark)'; }
   } catch (e) {
-    $('vMsg').textContent = `Couldn't ${restore ? 'restore' : 'remove'} it: ${e.message}`; $('vMsg').style.color = 'var(--danger)';
+    $('vMsg').textContent = `Couldn't ${restore ? 'restore' : deleting ? 'delete' : 'remove'} it: ${e.message}`; $('vMsg').style.color = 'var(--danger)';
   }
-  $('vRemove').disabled = false;
-});
+  $('vRemove').disabled = $('vDelete').disabled = false;
+}
+$('vRemove').addEventListener('click', () => viewerAct(review.show === 'removed' ? 'restore' : 'remove'));
+$('vDelete').addEventListener('click', () => viewerAct('delete'));
 
 // ---------------------------------------------------------------------------
 // Sign in / out (kept in this page only: closing the tab signs you out).
