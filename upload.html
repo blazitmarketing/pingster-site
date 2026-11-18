@@ -323,6 +323,8 @@ function exifDay(d) {
 // ---------------------------------------------------------------------------
 // Pingster's database (sign-in, uploads, saving stories).
 let session = null; // { access_token, refresh_token, expires_at, uid }
+const KEEP = 'pingster-uploader-signin';
+function forgetSignIn() { try { sessionStorage.removeItem(KEEP); } catch { /* fine */ } }
 async function auth(body, grant) {
   const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=${grant}`, {
     method: 'POST', headers: { apikey: PUBLISHABLE_KEY, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
@@ -330,6 +332,8 @@ async function auth(body, grant) {
   if (!res.ok) throw new Error('signin');
   const j = await res.json();
   session = { access_token: j.access_token, refresh_token: j.refresh_token, expires_at: Date.now() + (j.expires_in - 120) * 1000, uid: j.user.id };
+  // Kept for this tab only, so reloading the page keeps you signed in; closing the tab signs you out.
+  try { sessionStorage.setItem(KEEP, JSON.stringify({ refresh_token: session.refresh_token })); } catch { /* private mode: just sign in again */ }
 }
 async function token() {
   if (session && Date.now() > session.expires_at) await auth({ refresh_token: session.refresh_token }, 'refresh_token');
@@ -998,7 +1002,27 @@ $('vRemove').addEventListener('click', () => viewerAct(review.show === 'removed'
 $('vDelete').addEventListener('click', () => viewerAct('delete'));
 
 // ---------------------------------------------------------------------------
-// Sign in / out (kept in this page only: closing the tab signs you out).
+// Sign in / out. Reloading keeps you signed in; closing the tab signs you out.
+/** After signing in: only admins may use the uploader. Returns false (and signs out) otherwise. */
+async function enterApp() {
+  const me = (await api(`/rest/v1/profiles?id=eq.${session.uid}&select=username,role`))[0];
+  if (!me || me.role !== 'admin') { session = null; forgetSignIn(); return false; }
+  $('who').textContent = `Signed in as @${me.username}`;
+  $('signin').classList.add('hidden');
+  $('app').classList.remove('hidden');
+  $('signOut').classList.remove('hidden');
+  $('tabs').classList.remove('hidden');
+  initMap();
+  loadTags();
+  return true;
+}
+(async () => {
+  let kept = null;
+  try { kept = JSON.parse(sessionStorage.getItem(KEEP) || 'null'); } catch { /* none */ }
+  if (!kept?.refresh_token) return;
+  try { await auth({ refresh_token: kept.refresh_token }, 'refresh_token'); await enterApp(); }
+  catch { session = null; forgetSignIn(); }
+})();
 $('signinForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   $('signinError').textContent = '';
@@ -1006,21 +1030,13 @@ $('signinForm').addEventListener('submit', async (e) => {
   try {
     await auth({ email: $('email').value.trim(), password: $('password').value }, 'password');
     $('password').value = '';
-    const me = (await api(`/rest/v1/profiles?id=eq.${session.uid}&select=username,role`))[0];
-    if (!me || me.role !== 'admin') {
-      session = null;
+    if (!await enterApp()) {
       $('signinError').textContent = 'This account isn’t a Pingster admin, so it can’t use the uploader.';
       return;
     }
-    $('who').textContent = `Signed in as @${me.username}`;
-    $('signin').classList.add('hidden');
-    $('app').classList.remove('hidden');
-    $('signOut').classList.remove('hidden');
-    $('tabs').classList.remove('hidden');
-    initMap();
-    loadTags();
   } catch {
     session = null;
+    forgetSignIn();
     $('signinError').textContent = 'Email and password did not match. Try again.';
   } finally {
     $('signinBtn').disabled = false;
@@ -1030,6 +1046,7 @@ $('signOut').addEventListener('click', async () => {
   if (uploading && !await ask('Photos are still uploading. Sign out anyway?')) return;
   try { await fetch(`${SUPABASE_URL}/auth/v1/logout`, { method: 'POST', headers: { apikey: PUBLISHABLE_KEY, Authorization: `Bearer ${session.access_token}` } }); } catch { /* fine */ }
   session = null;
+  forgetSignIn();
   location.reload();
 });
 </script>
