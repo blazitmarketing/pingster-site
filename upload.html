@@ -1,0 +1,793 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="strict-origin">
+  <!-- Admin photo uploader. Talks only to Pingster's database, OpenStreetMap (map pictures and
+       town names, coordinates only) and unpkg.com for the map library (pinned version + integrity check). -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://unpkg.com; style-src 'unsafe-inline' https://unpkg.com; img-src 'self' blob: data: https://*.tile.openstreetmap.org https://unpkg.com https://xhtgeyegcwxutrlgspds.supabase.co; connect-src https://xhtgeyegcwxutrlgspds.supabase.co https://nominatim.openstreetmap.org; form-action 'none'; base-uri 'none'">
+  <title>Pingster uploader</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <style>
+    :root {
+      --brand: #1FB89A; --brand-dark: #138A73; --brand-light: #E8F7F3; --border: #DDE3E8;
+      --text: #1B1F23; --muted: #5F6B76; --bg: #FFFFFF; --panel: #F6F8F9; --danger: #C62828; --warn-bg: #FFF4D6; --warn: #8A5A00;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) { --text: #EEF2F4; --muted: #A9B4BD; --bg: #121619; --panel: #1A2024; --brand-light: #16302A; --brand-dark: #5FD6BC; --danger: #FF8A80; --border: #3A444C; --warn-bg: #3A2E12; --warn: #F2C46B; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    header { display: flex; align-items: center; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+    .logo { font-size: 24px; font-weight: 800; color: var(--brand); margin: 0; }
+    header .who { color: var(--muted); margin-left: auto; font-size: 15px; }
+    button, .btn { font: inherit; font-weight: 700; border: 0; border-radius: 8px; padding: 10px 16px; cursor: pointer; background: var(--brand); color: #fff; }
+    button.alt, .btn.alt { background: var(--brand-light); color: var(--brand-dark); }
+    button.link { background: none; color: var(--brand-dark); padding: 4px 6px; font-weight: 600; }
+    button.danger { background: none; color: var(--danger); padding: 4px 6px; font-weight: 600; }
+    button:disabled { opacity: .5; cursor: default; }
+    input, textarea { font: inherit; width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); }
+    textarea { min-height: 70px; resize: vertical; }
+    label { display: block; font-size: 13px; font-weight: 700; color: var(--muted); margin: 8px 0 3px; }
+    .hidden { display: none !important; }
+    .muted { color: var(--muted); }
+    .error { color: var(--danger); font-weight: 600; }
+
+    #signin { max-width: 380px; margin: 60px auto; padding: 0 16px; }
+    #signin h1 { font-size: 22px; }
+
+    #app { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 42%); height: calc(100vh - 60px); }
+    #left { overflow-y: auto; padding: 16px 20px 80px; }
+    #right { position: relative; border-left: 1px solid var(--border); }
+    #map { position: absolute; inset: 0; }
+    #mapHint { position: absolute; z-index: 500; top: 10px; left: 50px; right: 10px; background: var(--warn-bg); color: var(--warn); padding: 8px 12px; border-radius: 8px; font-weight: 600; font-size: 14px; }
+    #findBox { position: absolute; z-index: 500; bottom: 14px; left: 14px; right: 14px; display: flex; gap: 6px; }
+    #findBox input { box-shadow: 0 2px 8px rgba(0,0,0,.15); }
+
+    .rules { background: var(--warn-bg); color: var(--warn); border-radius: 10px; padding: 10px 14px; font-size: 14px; margin-bottom: 12px; }
+    #drop { border: 2px dashed var(--border); border-radius: 12px; padding: 22px; text-align: center; background: var(--panel); }
+    #drop.over { border-color: var(--brand); background: var(--brand-light); }
+    #drop .btns label { display: inline-block; }
+    #drop .btns { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 10px; }
+    .bar { display: flex; align-items: center; gap: 10px; margin: 14px 0; flex-wrap: wrap; }
+    .bar .count { font-weight: 700; }
+    #tagChips { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 0; }
+    .chip { background: var(--brand-light); color: var(--brand-dark); border-radius: 14px; padding: 3px 10px; font-size: 13px; font-weight: 700; cursor: pointer; border: 0; }
+
+    .row { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 14px; padding: 14px; border: 1px solid var(--border); border-radius: 12px; margin-bottom: 12px; background: var(--bg); }
+    .row.selected { border-color: var(--brand); box-shadow: 0 0 0 2px var(--brand-light); }
+    .row.done { opacity: .6; }
+    .row .pic { width: 150px; height: 150px; border-radius: 8px; object-fit: cover; background: var(--panel); display: block; }
+    .row .file { font-size: 12px; color: var(--muted); word-break: break-all; margin-top: 4px; }
+    .row .two { display: grid; grid-template-columns: minmax(0, 1fr) 150px; gap: 10px; }
+    .status { font-size: 14px; font-weight: 700; margin-top: 6px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+    .status.ok { color: var(--brand-dark); }
+    .status.need { color: var(--warn); }
+    .status.bad { color: var(--danger); }
+    .where { font-size: 14px; color: var(--muted); }
+
+    nav#tabs { display: flex; gap: 4px; }
+    .tab { background: none; color: var(--muted); padding: 8px 12px; }
+    .tab.on { background: var(--brand-light); color: var(--brand-dark); }
+    #review { padding: 16px 20px 110px; }
+    .rbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+    .rbar input { max-width: 320px; }
+    .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .seg button { background: none; color: var(--text); border-radius: 0; padding: 8px 12px; font-weight: 600; }
+    .seg button.on { background: var(--brand); color: #fff; }
+    #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+    .cell { position: relative; aspect-ratio: 1; border-radius: 8px; overflow: hidden; background: var(--panel); cursor: pointer; border: 3px solid transparent; padding: 0; }
+    .cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .cell .cap { position: absolute; left: 0; right: 0; bottom: 0; padding: 18px 6px 4px; font-size: 12px; line-height: 1.3; color: #fff; text-align: left; background: linear-gradient(transparent, rgba(0,0,0,.75)); }
+    .cell.sel { border-color: var(--danger); }
+    .cell.sel::after { content: '✓'; position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; border-radius: 50%; background: var(--danger); color: #fff; font-weight: 800; display: flex; align-items: center; justify-content: center; }
+    #selBar { position: fixed; left: 0; right: 0; bottom: 0; display: flex; gap: 12px; align-items: center; justify-content: center; padding: 14px; background: var(--bg); border-top: 1px solid var(--border); box-shadow: 0 -4px 12px rgba(0,0,0,.08); z-index: 1000; }
+    #selAct { background: var(--danger); }
+    #selAct.restore { background: var(--brand); }
+
+    @media (max-width: 800px) {
+      #app { grid-template-columns: 1fr; height: auto; }
+      #right { height: 360px; border-left: 0; border-top: 1px solid var(--border); order: -1; }
+      .row { grid-template-columns: 1fr; }
+      .row .pic { width: 100%; height: 220px; }
+    }
+  </style>
+</head>
+<body>
+<header>
+  <p class="logo">Pingster</p>
+  <nav id="tabs" class="hidden">
+    <button class="tab on" data-tab="app">Upload photos</button>
+    <button class="tab" data-tab="review">Review stories</button>
+  </nav>
+  <span class="who" id="who"></span>
+  <button class="alt hidden" id="signOut">Sign out</button>
+</header>
+
+<section id="signin">
+  <h1>Sign in with an admin account</h1>
+  <p class="muted">For Pingster admins only. Photos you upload here go live on the map straight away.</p>
+  <form id="signinForm" autocomplete="on">
+    <label for="email">Email</label>
+    <input id="email" type="email" autocomplete="username" required>
+    <label for="password">Password</label>
+    <input id="password" type="password" autocomplete="current-password" required>
+    <p class="error" id="signinError"></p>
+    <button type="submit" id="signinBtn">Sign in</button>
+  </form>
+</section>
+
+<section id="app" class="hidden">
+  <div id="left">
+    <div class="rules">Before uploading: no homes or house numbers, no children, no license plates, no private papers. Everything uploaded here goes live straight away.</div>
+    <div id="drop">
+      <strong>Drag photos here</strong> from your USB drive or computer
+      <div class="muted">JPEG photos work best. iPhone HEIC photos: export them as JPEG first.</div>
+      <div class="btns">
+        <label class="btn" style="margin:0;color:#fff">Choose photos<input id="pickFiles" type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png,.heic,.heif" multiple class="hidden"></label>
+        <label class="btn alt" style="margin:0">Choose a whole folder<input id="pickFolder" type="file" webkitdirectory multiple class="hidden"></label>
+      </div>
+    </div>
+    <div>
+      <label>Popular hashtags (click one, then it's added to the photo you're working on)</label>
+      <div id="tagChips"></div>
+    </div>
+    <div class="bar">
+      <span class="count" id="count">No photos yet</span>
+      <button id="uploadAll" disabled>Upload ready photos</button>
+      <button class="link hidden" id="clearDone">Clear uploaded</button>
+      <span id="progress" class="muted"></span>
+    </div>
+    <div id="rows"></div>
+  </div>
+  <div id="right">
+    <div id="map"></div>
+    <div id="mapHint" class="hidden"></div>
+    <form id="findBox">
+      <input id="findText" placeholder="Find a place for the selected photo (e.g. Gillette Stadium, Foxborough MA)">
+      <button type="submit">Find</button>
+    </form>
+  </div>
+</section>
+
+<section id="review" class="hidden">
+  <div class="rbar">
+    <div class="seg">
+      <button class="on" data-show="public">Live stories</button>
+      <button data-show="removed">Removed</button>
+    </div>
+    <div class="seg">
+      <button class="on" data-who="me">Posted by me</button>
+      <button data-who="all">Everyone</button>
+    </div>
+    <input id="rFilter" placeholder="Filter by place, town or words">
+    <span id="rCount" class="muted"></span>
+  </div>
+  <p class="muted" style="margin:0 0 10px">Click pictures to select them (click again to unselect). Removed stories disappear from the app but can be restored from the Removed list.</p>
+  <div id="grid"></div>
+  <p id="rMore" class="muted"></p>
+  <div id="selBar" class="hidden">
+    <strong id="selCount"></strong>
+    <button class="alt" id="selNone">Unselect all</button>
+    <button id="selAct"></button>
+  </div>
+</section>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script>
+'use strict';
+// ---------------------------------------------------------------------------
+// Settings (the publishable key is public by design; the database's own rules
+// decide what each signed-in person may do).
+const SUPABASE_URL = 'https://xhtgeyegcwxutrlgspds.supabase.co';
+const PUBLISHABLE_KEY = 'sb_publishable_ETbgZy6oW5TjJ7UekNSDVw_7C72l1xK';
+const BIG = 2048, THUMB = 480;
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ---------------------------------------------------------------------------
+// Reading the hidden photo information (where and when it was taken).
+// Only reads it here in your browser; the uploaded copy has none of it.
+function readExif(buf) {
+  const v = new DataView(buf);
+  if (v.byteLength < 4 || v.getUint16(0) !== 0xFFD8) return {};
+  let p = 2;
+  while (p + 4 <= v.byteLength) {
+    if (v.getUint8(p) !== 0xFF) return {};
+    const marker = v.getUint8(p + 1);
+    const len = v.getUint16(p + 2);
+    if (marker === 0xE1 && v.getUint32(p + 4) === 0x45786966) return parseTiff(v, p + 10); // "Exif"
+    if (marker === 0xDA) return {};
+    p += 2 + len;
+  }
+  return {};
+}
+function parseTiff(v, t) {
+  if (t + 8 > v.byteLength) return {};
+  const le = v.getUint16(t) === 0x4949;
+  const u16 = (o) => v.getUint16(t + o, le), u32 = (o) => v.getUint32(t + o, le);
+  const out = {};
+  const readIfd = (off) => {
+    const tags = {};
+    if (!off || t + off + 2 > v.byteLength) return tags;
+    const n = u16(off);
+    for (let i = 0; i < n; i++) {
+      const e = off + 2 + i * 12;
+      if (t + e + 12 > v.byteLength) break;
+      tags[u16(e)] = { type: u16(e + 2), count: u32(e + 4), at: e + 8 };
+    }
+    return tags;
+  };
+  const valOff = (tag, size) => (tag.count * size > 4 ? u32(tag.at) : tag.at);
+  const ascii = (tag) => { if (!tag) return null; const o = valOff(tag, 1); let s = ''; for (let i = 0; i < tag.count - 1 && t + o + i < v.byteLength; i++) s += String.fromCharCode(v.getUint8(t + o + i)); return s; };
+  const rationals = (tag) => { if (!tag) return null; const o = valOff(tag, 8); const r = []; for (let i = 0; i < tag.count; i++) { const d = u32(o + i * 8 + 4); r.push(d ? u32(o + i * 8) / d : 0); } return r; };
+  const ifd0 = readIfd(u32(4));
+  if (ifd0[0x8769]) {
+    const exif = readIfd(u32(ifd0[0x8769].at));
+    out.date = ascii(exif[0x9003]) || ascii(exif[0x9004]);
+  }
+  if (!out.date && ifd0[0x0132]) out.date = ascii(ifd0[0x0132]);
+  if (ifd0[0x8825]) {
+    const g = readIfd(u32(ifd0[0x8825].at));
+    const la = rationals(g[2]), lo = rationals(g[4]);
+    if (la && lo && la.length >= 2 && lo.length >= 2) {
+      let lat = la[0] + la[1] / 60 + (la[2] || 0) / 3600;
+      let lng = lo[0] + lo[1] / 60 + (lo[2] || 0) / 3600;
+      if ((ascii(g[1]) || 'N').toUpperCase().startsWith('S')) lat = -lat;
+      if ((ascii(g[3]) || 'E').toUpperCase().startsWith('W')) lng = -lng;
+      if (Math.abs(lat) <= 90 && Math.abs(lng) <= 180 && !(lat === 0 && lng === 0)) { out.lat = lat; out.lng = lng; }
+    }
+  }
+  return out;
+}
+/** "2018:07:30 14:05:11" -> "2018-07-30" (for the date box). */
+function exifDay(d) {
+  const m = /^(\d{4})[-:](\d{2})[-:](\d{2})/.exec(d || '');
+  return m && m[1] !== '0000' ? `${m[1]}-${m[2]}-${m[3]}` : '';
+}
+
+// ---------------------------------------------------------------------------
+// Pingster's database (sign-in, uploads, saving stories).
+let session = null; // { access_token, refresh_token, expires_at, uid }
+async function auth(body, grant) {
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=${grant}`, {
+    method: 'POST', headers: { apikey: PUBLISHABLE_KEY, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error('signin');
+  const j = await res.json();
+  session = { access_token: j.access_token, refresh_token: j.refresh_token, expires_at: Date.now() + (j.expires_in - 120) * 1000, uid: j.user.id };
+}
+async function token() {
+  if (session && Date.now() > session.expires_at) await auth({ refresh_token: session.refresh_token }, 'refresh_token');
+  return session.access_token;
+}
+async function api(path, opts = {}) {
+  const res = await fetch(SUPABASE_URL + path, {
+    ...opts,
+    headers: { apikey: PUBLISHABLE_KEY, Authorization: `Bearer ${await token()}`, ...(opts.json ? { 'Content-Type': 'application/json' } : {}), ...(opts.headers || {}) },
+    body: opts.json ? JSON.stringify(opts.json) : opts.body,
+  });
+  const text = await res.text();
+  let data = null; try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+  if (!res.ok) throw new Error((data && (data.message || data.error)) || `error ${res.status}`);
+  return data;
+}
+const rpc = (name, args) => api(`/rest/v1/rpc/${name}`, { method: 'POST', json: args });
+async function uploadFile(path, blob) {
+  await api(`/storage/v1/object/uploads/${path}`, { method: 'POST', body: blob, headers: { 'Content-Type': 'image/jpeg', 'x-upsert': 'false' } });
+}
+async function removeFiles(paths) {
+  try { await api('/storage/v1/object/uploads', { method: 'DELETE', json: { prefixes: paths } }); } catch { /* tidy-up only */ }
+}
+
+// ---------------------------------------------------------------------------
+// Town / state / country from OpenStreetMap (sends only the coordinates; about
+// one lookup a second, as its rules ask; nearby photos share one lookup).
+const placeCache = new Map();
+let lastLookup = 0;
+async function osm(url) {
+  for (let attempt = 0; ; attempt++) {
+    const wait = 1100 - (Date.now() - lastLookup);
+    if (wait > 0) await sleep(wait);
+    lastLookup = Date.now();
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (res.ok) return res.json();
+    if ((res.status === 429 || res.status === 503) && attempt < 3) { await sleep(4000 * (attempt + 1)); continue; }
+    throw new Error('lookup');
+  }
+}
+function partsFrom(a = {}) {
+  const town = a.city || a.town || a.village || a.hamlet || a.municipality || a.suburb || a.county || null;
+  const region = a.state || a.province || a.region || a.state_district || null;
+  const iso = a['ISO3166-2-lvl4'] || a['ISO3166-2-lvl6'] || '';
+  const code = iso.includes('-') ? iso.split('-')[1] : null;
+  return {
+    town: town && town.slice(0, 80), region: region && region.slice(0, 80),
+    region_code: code && code.length <= 3 ? code : null,
+    country: a.country ? a.country.slice(0, 80) : null,
+    country_code: (a.country_code || '').slice(0, 2).toLowerCase() || null,
+  };
+}
+async function placeFor(lat, lng) {
+  const key = `${lat.toFixed(2)},${lng.toFixed(2)}`;
+  if (!placeCache.has(key)) {
+    placeCache.set(key, osm(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&addressdetails=1&accept-language=en&lat=${lat.toFixed(5)}&lon=${lng.toFixed(5)}`)
+      .then((j) => ({ parts: partsFrom(j.address), name: suggestName(j) }))
+      .catch((e) => { placeCache.delete(key); throw e; }));
+  }
+  return placeCache.get(key);
+}
+/** A suggested place name: a real place ("Gillette Stadium"), never a house address. */
+function suggestName(j) {
+  const a = j.address || {};
+  const named = j.name && !/^\d/.test(j.name) && !a.house_number ? j.name : '';
+  if (named && j.category !== 'building' && j.category !== 'place') return named.slice(0, 120);
+  return (a.city || a.town || a.village || a.hamlet || a.suburb || a.county || '').slice(0, 120);
+}
+const whereLine = (p) => [p.town, p.region_code || p.region, p.country].filter(Boolean).join(' • ');
+
+// ---------------------------------------------------------------------------
+// Pictures: small preview, and the upright, shrunk copies that get uploaded.
+// Re-drawing the photo makes a brand-new JPEG with none of the hidden information.
+async function drawScaled(file, maxWidth, quality) {
+  const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  const scale = Math.min(1, maxWidth / bmp.width);
+  const c = document.createElement('canvas');
+  c.width = Math.round(bmp.width * scale); c.height = Math.round(bmp.height * scale);
+  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+  bmp.close();
+  return new Promise((resolve, reject) => c.toBlob((b) => (b ? resolve(b) : reject(new Error('picture'))), 'image/jpeg', quality));
+}
+
+// ---------------------------------------------------------------------------
+// The list of photos.
+const items = []; // { id, file, lat, lng, day, title, desc, parts, status, marker, previewUrl, el }
+let selected = null;
+let popularTags = [];
+const DONE_KEY = 'pingster-uploaded-files';
+function doneSet() { try { return new Set(JSON.parse(localStorage.getItem(DONE_KEY) || '[]')); } catch { return new Set(); } }
+function remember(fp) { try { const s = doneSet(); s.add(fp); localStorage.setItem(DONE_KEY, JSON.stringify([...s].slice(-5000))); } catch { /* fine */ } }
+const fingerprint = (f) => `${f.name}|${f.size}|${f.lastModified}`;
+
+const isHeic = (f) => /\.(heic|heif)$/i.test(f.name) || /heic|heif/i.test(f.type);
+const isPicture = (f) => /^image\/(jpeg|png)$/i.test(f.type) || /\.(jpe?g|png)$/i.test(f.name);
+
+async function addFiles(list) {
+  const files = [...list].filter((f) => isPicture(f) || isHeic(f));
+  const already = doneSet();
+  const known = new Set(items.map((i) => fingerprint(i.file)));
+  for (const file of files) {
+    const fp = fingerprint(file);
+    if (known.has(fp)) continue;
+    const it = { id: crypto.randomUUID(), file, lat: null, lng: null, day: '', title: '', desc: '', parts: null, status: 'new', note: '' };
+    if (isHeic(file)) { it.status = 'heic'; }
+    else if (already.has(fp)) { it.status = 'dupe'; }
+    items.push(it);
+    renderRow(it);
+  }
+  updateBar();
+  for (const it of items.filter((i) => i.status === 'new' || i.status === 'dupe')) {
+    if (it.read) continue;
+    it.read = true;
+    try {
+      const ex = readExif(await it.file.slice(0, 262144).arrayBuffer());
+      it.day = exifDay(ex.date) || new Date(it.file.lastModified).toISOString().slice(0, 10);
+      if (ex.lat != null) { it.lat = ex.lat; it.lng = ex.lng; }
+      it.previewUrl = URL.createObjectURL(await drawScaled(it.file, 400, 0.7));
+    } catch { it.note = 'Could not read this picture.'; it.status = 'bad'; }
+    if (it.status === 'new') it.status = 'ready';
+    renderRow(it);
+    placeMarker(it);
+    if (it.lat != null) lookupPlace(it);
+  }
+  fitMap();
+  updateBar();
+}
+
+async function lookupPlace(it) {
+  it.parts = null; it.looking = true; renderStatus(it);
+  try {
+    const { parts, name } = await placeFor(it.lat, it.lng);
+    it.parts = parts;
+    if (!it.title && name) { it.title = name; const t = it.el?.querySelector('[data-f="title"]'); if (t) t.value = name; }
+  } catch { it.parts = null; }
+  it.looking = false; renderStatus(it); updateBar();
+}
+
+function ready(it) { return (it.status === 'ready' || it.status === 'dupe' || it.status === 'failed') && it.lat != null; }
+
+function renderRow(it) {
+  if (!it.el) {
+    it.el = document.createElement('div');
+    it.el.className = 'row';
+    it.el.addEventListener('click', (e) => { if (!e.target.closest('button')) select(it); });
+    $('rows').appendChild(it.el);
+  }
+  it.el.classList.toggle('done', it.status === 'done');
+  const locked = it.status === 'done' || it.status === 'uploading' || it.status === 'heic' || it.status === 'bad';
+  it.el.innerHTML = `
+    <div>
+      ${it.previewUrl ? `<img class="pic" src="${it.previewUrl}" alt="">` : `<div class="pic"></div>`}
+      <div class="file">${esc(it.file.name)}</div>
+    </div>
+    <div>
+      <div class="two">
+        <div><label>Place name</label><input data-f="title" maxlength="120" value="${esc(it.title)}" placeholder="e.g. Foxborough Town Common" ${locked ? 'disabled' : ''}></div>
+        <div><label>Date taken</label><input data-f="day" type="date" value="${esc(it.day)}" max="${new Date().toISOString().slice(0, 10)}" ${locked ? 'disabled' : ''}></div>
+      </div>
+      <label>What's the story? (add #hashtags)</label>
+      <textarea data-f="desc" maxlength="2000" placeholder="Tell people about this spot." ${locked ? 'disabled' : ''}>${esc(it.desc)}</textarea>
+      <div class="status" data-status></div>
+    </div>`;
+  it.el.querySelectorAll('[data-f]').forEach((el) => {
+    el.addEventListener('input', () => { it[el.dataset.f] = el.value; });
+    el.addEventListener('focus', () => select(it));
+  });
+  renderStatus(it);
+}
+
+function renderStatus(it) {
+  const s = it.el?.querySelector('[data-status]');
+  if (!s) return;
+  const where = it.parts ? whereLine(it.parts) : '';
+  const remove = it.status !== 'done' && it.status !== 'uploading' ? `<button class="danger" data-act="remove">Remove</button>` : '';
+  let html, cls;
+  if (it.status === 'heic') { cls = 'bad'; html = 'iPhone HEIC photo: export it as JPEG first, then add it again.'; }
+  else if (it.status === 'bad') { cls = 'bad'; html = esc(it.note); }
+  else if (it.status === 'done') { cls = 'ok'; html = `✓ Uploaded and live${where ? ` · ${esc(where)}` : ''}`; }
+  else if (it.status === 'uploading') { cls = ''; html = esc(it.note || 'Uploading…'); }
+  else if (it.lat == null) { cls = 'need'; html = `No location in this photo. Select it, then click the map (or use Find) to place it.`; }
+  else {
+    cls = it.status === 'failed' ? 'bad' : 'ok';
+    html = it.status === 'failed' ? `Failed: ${esc(it.note)}. Click Upload to try again.` : it.looking ? 'Finding the town…' : `📍 ${esc(where || 'Placed on the map')}`;
+    if (it.status === 'dupe') html += ' · <span style="color:var(--warn)">Looks like you already uploaded this file.</span>';
+    html += ` <button class="link" data-act="move">Move pin</button>`;
+  }
+  s.className = `status ${cls}`;
+  s.innerHTML = html + ' ' + remove;
+  s.querySelector('[data-act="remove"]')?.addEventListener('click', () => removeItem(it));
+  s.querySelector('[data-act="move"]')?.addEventListener('click', () => { select(it); showHint(it); });
+}
+
+function removeItem(it) {
+  const i = items.indexOf(it);
+  if (i >= 0) items.splice(i, 1);
+  it.el?.remove();
+  if (it.marker) map.removeLayer(it.marker);
+  if (it.previewUrl) URL.revokeObjectURL(it.previewUrl);
+  if (selected === it) { selected = null; showHint(null); }
+  updateBar();
+}
+
+function select(it) {
+  if (selected === it) return;
+  selected?.el?.classList.remove('selected');
+  selected = it;
+  it.el?.classList.add('selected');
+  if (it.lat != null) { map.setView([it.lat, it.lng], Math.max(map.getZoom(), 14)); it.marker?.openTooltip(); }
+  showHint(it.lat == null && it.status !== 'heic' && it.status !== 'bad' && it.status !== 'done' ? it : null);
+}
+function showHint(it) {
+  const h = $('mapHint');
+  if (!it) { h.classList.add('hidden'); return; }
+  h.textContent = `Click the map where "${it.title || it.file.name}" was taken (or drag its pin).`;
+  h.classList.remove('hidden');
+}
+
+function updateBar() {
+  const n = items.length, r = items.filter(ready).length, d = items.filter((i) => i.status === 'done').length;
+  const needs = items.filter((i) => i.lat == null && !['heic', 'bad', 'done'].includes(i.status)).length;
+  $('count').textContent = n ? `${n} photo${n === 1 ? '' : 's'} · ${r} ready${needs ? ` · ${needs} need a spot` : ''}${d ? ` · ${d} uploaded` : ''}` : 'No photos yet';
+  $('uploadAll').disabled = !r || uploading;
+  $('uploadAll').textContent = r ? `Upload ${r} ready photo${r === 1 ? '' : 's'}` : 'Upload ready photos';
+  $('clearDone').classList.toggle('hidden', !d);
+}
+
+// ---------------------------------------------------------------------------
+// Map
+let map;
+function initMap() {
+  map = L.map('map', { worldCopyJump: true }).setView([39.5, -98.35], 4);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
+  map.on('click', (e) => {
+    if (!selected || ['done', 'uploading', 'heic', 'bad'].includes(selected.status)) return;
+    setSpot(selected, e.latlng.lat, e.latlng.lng);
+  });
+}
+function placeMarker(it) {
+  if (it.lat == null) return;
+  if (it.marker) { it.marker.setLatLng([it.lat, it.lng]); return; }
+  it.marker = L.marker([it.lat, it.lng], { draggable: true }).addTo(map);
+  it.marker.bindTooltip(() => esc(it.title || it.file.name));
+  it.marker.on('click', () => { select(it); it.el?.scrollIntoView({ behavior: 'smooth', block: 'center' }); });
+  it.marker.on('dragend', () => { const p = it.marker.getLatLng(); setSpot(it, p.lat, p.lng); });
+}
+function setSpot(it, lat, lng) {
+  if (['done', 'uploading'].includes(it.status)) return;
+  it.lat = lat; it.lng = ((lng + 540) % 360) - 180;
+  placeMarker(it);
+  showHint(null);
+  lookupPlace(it);
+  updateBar();
+}
+function fitMap() {
+  const pts = items.filter((i) => i.lat != null).map((i) => [i.lat, i.lng]);
+  if (pts.length) map.fitBounds(pts, { padding: [40, 40], maxZoom: 14 });
+}
+$('findBox').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const q = $('findText').value.trim();
+  if (!q) return;
+  if (!selected) { alert('Click a photo in the list first, then find its place.'); return; }
+  try {
+    const found = await osm(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&accept-language=en&q=${encodeURIComponent(q)}`);
+    if (!found.length) { alert('No place found. Try adding the town or state.'); return; }
+    setSpot(selected, +found[0].lat, +found[0].lon);
+    map.setView([selected.lat, selected.lng], 16);
+  } catch { alert('Could not look that up just now. Try again in a moment.'); }
+});
+
+// ---------------------------------------------------------------------------
+// Hashtag chips: click one to add it to the story you're working on.
+async function loadTags() {
+  try { popularTags = (await rpc('popular_hashtags', { max_results: 40 })).map((r) => r.tag); } catch { popularTags = []; }
+  const starters = ['sunset', 'beach', 'hiddengem', 'history', 'foodie', 'nature', 'views', 'roadtrip', 'architecture', 'landmark'];
+  const tags = [...new Set([...popularTags, ...starters])].slice(0, 40);
+  $('tagChips').innerHTML = tags.map((t) => `<button class="chip" data-tag="${esc(t)}">#${esc(t)}</button>`).join('');
+  $('tagChips').querySelectorAll('[data-tag]').forEach((b) => b.addEventListener('click', () => {
+    if (!selected || ['done', 'uploading', 'heic', 'bad'].includes(selected.status)) { alert('Click a photo in the list first.'); return; }
+    const tag = `#${b.dataset.tag}`;
+    if (new RegExp(`(^|\\s)${tag}(\\s|$)`, 'i').test(selected.desc)) return;
+    selected.desc = (selected.desc.trim() ? `${selected.desc.trim()} ` : '') + tag;
+    const ta = selected.el.querySelector('[data-f="desc"]'); if (ta) ta.value = selected.desc;
+  }));
+}
+function hashtagsIn(text) {
+  const found = text.match(/#[A-Za-z0-9_]{1,30}/g) || [];
+  return [...new Set(found.map((t) => t.slice(1).toLowerCase()))].slice(0, 10);
+}
+
+// ---------------------------------------------------------------------------
+// Uploading
+let uploading = false;
+async function uploadOne(it) {
+  it.status = 'uploading'; it.note = 'Preparing…'; renderRow(it);
+  const base = `${session.uid}/desk-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const media = `${base}.jpg`, thumb = `${base}-thumb.jpg`;
+  const sent = [];
+  try {
+    const big = await drawScaled(it.file, BIG, 0.82);
+    const small = await drawScaled(it.file, THUMB, 0.7);
+    it.note = 'Uploading…'; renderStatus(it);
+    await uploadFile(media, big); sent.push(media);
+    await uploadFile(thumb, small); sent.push(thumb);
+    if (!it.parts) { try { it.parts = (await placeFor(it.lat, it.lng)).parts; } catch { /* town can be filled later */ } }
+    it.note = 'Saving…'; renderStatus(it);
+    // Photo's own day (midday), never in the future; the database also checks this.
+    const when = it.day ? new Date(`${it.day}T12:00:00`) : null;
+    const rows = await api('/rest/v1/posts?select=id', {
+      method: 'POST', headers: { Prefer: 'return=representation' },
+      json: {
+        ...(it.parts || {}),
+        author_id: session.uid,
+        media_type: 'photo',
+        media_path: media,
+        thumb_path: thumb,
+        location: `SRID=4326;POINT(${it.lng} ${it.lat})`,
+        place_name: it.title.trim().slice(0, 120) || null,
+        description: it.desc.trim().slice(0, 2000) || null,
+        hashtags: hashtagsIn(it.desc),
+        ...(when && when < new Date() ? { created_at: when.toISOString() } : {}),
+      },
+    });
+    const postId = rows[0].id;
+    await rpc('moderate', { kind: 'post', target: postId, decision: 'keep', note: 'desktop uploader' });
+    it.status = 'done'; it.note = '';
+    remember(fingerprint(it.file));
+    if (it.marker) it.marker.dragging.disable();
+  } catch (e) {
+    if (sent.length) await removeFiles(sent);
+    it.status = 'failed';
+    it.note = /network|fetch/i.test(e.message) ? 'no internet connection' : e.message;
+  }
+  renderRow(it);
+}
+$('uploadAll').addEventListener('click', async () => {
+  const todo = items.filter(ready);
+  if (!todo.length) return;
+  const untitled = todo.filter((i) => !i.title.trim()).length;
+  if (untitled && !confirm(`${untitled} photo${untitled === 1 ? ' has' : 's have'} no place name. Upload anyway?`)) return;
+  uploading = true; updateBar();
+  for (const [n, it] of todo.entries()) {
+    $('progress').textContent = `Uploading ${n + 1} of ${todo.length}…`;
+    await uploadOne(it);
+  }
+  uploading = false;
+  const ok = todo.filter((i) => i.status === 'done').length;
+  $('progress').textContent = `Finished: ${ok} uploaded${ok < todo.length ? `, ${todo.length - ok} failed (click Upload to retry)` : ''}.`;
+  updateBar();
+});
+$('clearDone').addEventListener('click', () => { items.filter((i) => i.status === 'done').forEach(removeItem); });
+window.addEventListener('beforeunload', (e) => { if (uploading || items.some((i) => ready(i))) { e.preventDefault(); e.returnValue = ''; } });
+
+// ---------------------------------------------------------------------------
+// Adding photos
+$('pickFiles').addEventListener('change', (e) => { addFiles(e.target.files); e.target.value = ''; });
+$('pickFolder').addEventListener('change', (e) => { addFiles(e.target.files); e.target.value = ''; });
+const drop = $('drop');
+['dragenter', 'dragover'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', async (e) => {
+  // Dropped folders: read every picture inside them.
+  const entries = [...(e.dataTransfer.items || [])].map((i) => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+  if (!entries.length) { addFiles(e.dataTransfer.files); return; }
+  const files = [];
+  const walk = async (entry) => {
+    if (entry.isFile) files.push(await new Promise((res, rej) => entry.file(res, rej)));
+    else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      for (;;) { const batch = await new Promise((res, rej) => reader.readEntries(res, rej)); if (!batch.length) break; for (const b of batch) await walk(b); }
+    }
+  };
+  for (const en of entries) await walk(en);
+  addFiles(files);
+});
+
+// ---------------------------------------------------------------------------
+// Review stories: a picture grid of stories; select some and remove (hide) or restore them.
+// "Remove" is the same as "Not approved" in the app: the story and its photo are kept,
+// so it can be restored. Nothing is deleted for good here.
+const review = { show: 'public', who: 'me', rows: [], urls: {}, sel: new Set(), loaded: false, busy: false };
+
+document.querySelectorAll('#tabs .tab').forEach((b) => b.addEventListener('click', () => {
+  if (uploading && b.dataset.tab === 'review') { alert('Photos are still uploading. Switch when they finish.'); return; }
+  document.querySelectorAll('#tabs .tab').forEach((x) => x.classList.toggle('on', x === b));
+  $('app').classList.toggle('hidden', b.dataset.tab !== 'app');
+  $('review').classList.toggle('hidden', b.dataset.tab !== 'review');
+  if (b.dataset.tab === 'app') map?.invalidateSize();
+  else if (!review.loaded) loadReview();
+}));
+document.querySelectorAll('[data-show]').forEach((b) => b.addEventListener('click', () => {
+  if (review.busy) return;
+  document.querySelectorAll('[data-show]').forEach((x) => x.classList.toggle('on', x === b));
+  review.show = b.dataset.show; loadReview();
+}));
+document.querySelectorAll('[data-who]').forEach((b) => b.addEventListener('click', () => {
+  if (review.busy) return;
+  document.querySelectorAll('[data-who]').forEach((x) => x.classList.toggle('on', x === b));
+  review.who = b.dataset.who; loadReview();
+}));
+$('rFilter').addEventListener('input', () => renderGrid());
+
+async function loadReview() {
+  review.loaded = true; review.rows = []; review.sel.clear(); updateSel();
+  $('grid').innerHTML = ''; $('rCount').textContent = 'Loading…';
+  try {
+    const mine = review.who === 'me' ? `&author_id=eq.${session.uid}` : '';
+    for (let offset = 0; ; offset += 500) {
+      const page = await api(`/rest/v1/posts?select=id,place_name,description,thumb_path,media_path,media_type,created_at,town,region_code,region,country&status=eq.${review.show}${mine}&order=created_at.desc&limit=500&offset=${offset}`);
+      review.rows.push(...page);
+      $('rCount').textContent = `Loading… ${review.rows.length}`;
+      if (page.length < 500) break;
+    }
+  } catch (e) { $('rCount').textContent = `Couldn't load stories: ${e.message}`; return; }
+  renderGrid();
+}
+
+function visibleRows() {
+  const q = $('rFilter').value.trim().toLowerCase();
+  if (!q) return review.rows;
+  return review.rows.filter((r) => [r.place_name, r.description, r.town, r.region, r.region_code, r.country].some((v) => (v || '').toLowerCase().includes(q)));
+}
+
+function renderGrid() {
+  const rows = visibleRows();
+  const label = review.show === 'public' ? 'live' : 'removed';
+  $('rCount').textContent = `${rows.length}${rows.length !== review.rows.length ? ` of ${review.rows.length}` : ''} ${label} ${review.rows.length === 1 ? 'story' : 'stories'}`;
+  $('grid').innerHTML = rows.map((r) => {
+    const where = [r.town, r.region_code || r.region].filter(Boolean).join(', ');
+    const url = review.urls[r.thumb_path || r.media_path];
+    return `<button class="cell${review.sel.has(r.id) ? ' sel' : ''}" data-id="${r.id}" title="${esc([r.place_name, r.description].filter(Boolean).join(' — '))}">
+      ${url ? `<img src="${esc(url)}" alt="" loading="lazy">` : ''}
+      <span class="cap">${esc(r.place_name || 'No name')}${where ? `<br>${esc(where)}` : ''}${r.media_type === 'video' ? ' · video' : ''}</span>
+    </button>`;
+  }).join('');
+  $('grid').querySelectorAll('.cell').forEach((c) => c.addEventListener('click', () => {
+    const id = c.dataset.id;
+    review.sel.has(id) ? review.sel.delete(id) : review.sel.add(id);
+    c.classList.toggle('sel', review.sel.has(id));
+    updateSel();
+  }));
+  signThumbs(rows);
+}
+
+/** Gets short-lived picture links (100 at a time) and drops them into the grid. */
+async function signThumbs(rows) {
+  const need = [...new Set(rows.map((r) => r.thumb_path || r.media_path).filter((p) => p && !review.urls[p]))];
+  for (let i = 0; i < need.length; i += 100) {
+    try {
+      const got = await api('/storage/v1/object/sign/uploads', { method: 'POST', json: { expiresIn: 3600, paths: need.slice(i, i + 100) } });
+      for (const g of got || []) if (g.signedURL) review.urls[g.path] = `${SUPABASE_URL}/storage/v1${g.signedURL}`;
+    } catch { /* pictures just stay blank */ }
+    for (const r of rows) {
+      const p = r.thumb_path || r.media_path, url = review.urls[p];
+      const cell = url && $('grid').querySelector(`[data-id="${r.id}"]`);
+      if (cell && !cell.querySelector('img')) cell.insertAdjacentHTML('afterbegin', `<img src="${esc(url)}" alt="" loading="lazy">`);
+    }
+  }
+}
+
+function updateSel() {
+  const n = review.sel.size;
+  $('selBar').classList.toggle('hidden', !n);
+  $('selCount').textContent = `${n} selected`;
+  const restore = review.show === 'removed';
+  $('selAct').textContent = restore ? `Restore ${n}` : `Remove ${n} from the app`;
+  $('selAct').classList.toggle('restore', restore);
+}
+$('selNone').addEventListener('click', () => { review.sel.clear(); renderGrid(); updateSel(); });
+$('selAct').addEventListener('click', async () => {
+  const ids = [...review.sel];
+  const restore = review.show === 'removed';
+  if (!ids.length) return;
+  if (!confirm(restore
+    ? `Put ${ids.length} ${ids.length === 1 ? 'story' : 'stories'} back on the map?`
+    : `Remove ${ids.length} ${ids.length === 1 ? 'story' : 'stories'} from the app? (You can restore them later from the Removed list.)`)) return;
+  review.busy = true; $('selAct').disabled = true;
+  let ok = 0, failed = 0;
+  for (const [n, id] of ids.entries()) {
+    $('selCount').textContent = `${restore ? 'Restoring' : 'Removing'} ${n + 1} of ${ids.length}…`;
+    try {
+      await rpc('moderate', { kind: 'post', target: id, decision: restore ? 'keep' : 'remove', note: 'desktop review' });
+      review.rows = review.rows.filter((r) => r.id !== id);
+      review.sel.delete(id);
+      ok++;
+    } catch { failed++; }
+  }
+  review.busy = false; $('selAct').disabled = false;
+  renderGrid(); updateSel();
+  alert(`${ok} ${restore ? 'restored' : 'removed'}${failed ? `, ${failed} failed (still selected, try again)` : ''}.`);
+});
+
+// ---------------------------------------------------------------------------
+// Sign in / out (kept in this page only: closing the tab signs you out).
+$('signinForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  $('signinError').textContent = '';
+  $('signinBtn').disabled = true;
+  try {
+    await auth({ email: $('email').value.trim(), password: $('password').value }, 'password');
+    $('password').value = '';
+    const me = (await api(`/rest/v1/profiles?id=eq.${session.uid}&select=username,role`))[0];
+    if (!me || me.role !== 'admin') {
+      session = null;
+      $('signinError').textContent = 'This account isn’t a Pingster admin, so it can’t use the uploader.';
+      return;
+    }
+    $('who').textContent = `Signed in as @${me.username}`;
+    $('signin').classList.add('hidden');
+    $('app').classList.remove('hidden');
+    $('signOut').classList.remove('hidden');
+    $('tabs').classList.remove('hidden');
+    initMap();
+    loadTags();
+  } catch {
+    session = null;
+    $('signinError').textContent = 'Email and password did not match. Try again.';
+  } finally {
+    $('signinBtn').disabled = false;
+  }
+});
+$('signOut').addEventListener('click', async () => {
+  if (uploading && !confirm('Photos are still uploading. Sign out anyway?')) return;
+  try { await fetch(`${SUPABASE_URL}/auth/v1/logout`, { method: 'POST', headers: { apikey: PUBLISHABLE_KEY, Authorization: `Bearer ${session.access_token}` } }); } catch { /* fine */ }
+  session = null;
+  location.reload();
+});
+</script>
+</body>
+</html>
