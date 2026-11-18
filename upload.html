@@ -480,9 +480,16 @@ function renderRow(it) {
     it.el = document.createElement('div');
     it.el.className = 'row';
     it.el.addEventListener('click', (e) => { if (!e.target.closest('button')) select(it); });
-    $('rows').appendChild(it.el);
   }
-  it.el.classList.toggle('done', it.status === 'done');
+  // Photos still to upload stay on top; uploaded ones move down below them (newest uploaded first).
+  const isDone = it.status === 'done';
+  if (!it.el.parentNode || it.placedDone !== isDone) {
+    const rows = $('rows');
+    const firstDone = [...rows.children].find((r) => r !== it.el && r.classList.contains('done'));
+    rows.insertBefore(it.el, firstDone || null);
+    it.placedDone = isDone;
+  }
+  it.el.classList.toggle('done', isDone);
   const locked = it.status === 'done' || it.status === 'uploading' || it.status === 'heic' || it.status === 'bad';
   it.el.innerHTML = `
     <div>
