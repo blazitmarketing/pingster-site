@@ -177,19 +177,10 @@
 
 <section id="review" class="hidden">
   <div class="rbar">
-    <div class="seg">
-      <button class="on" data-show="public">Live stories</button>
-      <button data-show="removed">Removed</button>
-    </div>
-    <div class="seg">
-      <button class="on" data-who="me">Posted by me</button>
-      <button data-who="all">Everyone</button>
-    </div>
     <input id="rFilter" placeholder="Filter by place, town or words">
     <span id="rCount" class="muted"></span>
-    <button class="alt" id="selAll">Select all shown</button>
   </div>
-  <p class="muted" style="margin:0 0 10px">Click a picture to see it big (and fix its name or story). To remove several at once, click the circle in each picture's corner. Removing <b>your own</b> stories deletes them for good (picture and all). Removing someone else's story hides it from the app (it stays in the Removed list so you can restore it).</p>
+  <p class="muted" style="margin:0 0 10px">Your stories. Click a picture to see it big (and fix its name or story, or delete it). To delete several at once, click the circle in each picture's corner. Deleting erases the story and its picture for good.</p>
   <div id="grid"></div>
   <p id="rMore" class="muted"></p>
   <div id="selBar" class="hidden">
@@ -725,8 +716,7 @@ drop.addEventListener('drop', async (e) => {
 
 // ---------------------------------------------------------------------------
 // Review stories: a picture grid of stories; select some and remove (hide) or restore them.
-// "Remove" is the same as "Not approved" in the app: the story and its photo are kept,
-// so it can be restored. Nothing is deleted for good here.
+// Review shows only your own live stories; deleting one erases it and its pictures for good.
 const review = { show: 'public', who: 'me', rows: [], urls: {}, sel: new Set(), loaded: false, busy: false };
 
 document.querySelectorAll('#tabs .tab').forEach((b) => b.addEventListener('click', () => {
@@ -835,18 +825,13 @@ function updateSel() {
   $('selBar').classList.toggle('hidden', !n);
   $('selCount').textContent = `${n} selected`;
   const restore = review.show === 'removed';
-  $('selAct').textContent = restore ? `Restore ${n}` : `Remove ${n} from the app`;
+  $('selAct').textContent = restore ? `Restore ${n}` : `Delete ${n} for good`;
   $('selAct').classList.toggle('restore', restore);
   // In the Removed list, your own stories can also be deleted for good.
   const mineSel = review.rows.filter((r) => review.sel.has(r.id) && isMine(r)).length;
   $('selDel').classList.toggle('hidden', !restore || !mineSel);
   $('selDel').textContent = `Delete ${mineSel} of mine for good`;
 }
-$('selAll').addEventListener('click', () => {
-  if (review.busy) return;
-  for (const r of visibleRows()) review.sel.add(r.id);
-  renderGrid(); updateSel();
-});
 $('selDel').addEventListener('click', async () => {
   const rows = review.rows.filter((r) => review.sel.has(r.id) && isMine(r));
   if (!rows.length) return;
