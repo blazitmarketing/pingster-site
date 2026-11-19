@@ -1599,7 +1599,8 @@ $('signinForm').addEventListener('submit', async (e) => {
 });
 $('signOut').addEventListener('click', async () => {
   if (uploading && !await ask('Photos are still uploading. Sign out anyway?')) return;
-  try { await fetch(`${SUPABASE_URL}/auth/v1/logout`, { method: 'POST', headers: { apikey: PUBLISHABLE_KEY, Authorization: `Bearer ${session.access_token}` } }); } catch { /* fine */ }
+  // scope=local: sign out of this page only (signing out everywhere also signed the phone app out).
+  try { await fetch(`${SUPABASE_URL}/auth/v1/logout?scope=local`, { method: 'POST', headers: { apikey: PUBLISHABLE_KEY, Authorization: `Bearer ${session.access_token}` } }); } catch { /* fine */ }
   session = null;
   forgetSignIn();
   location.reload();
