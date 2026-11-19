@@ -681,6 +681,15 @@ async function loadTags() {
     const ta = selected.el.querySelector('[data-f="desc"]'); if (ta) ta.value = selected.desc;
   }));
 }
+/** Imported stories keep their hashtags apart from the text: show them at the end of the story box,
+ *  so they can be edited and Save (which reads hashtags from the text) never drops them. */
+function withStoredTags(desc, tags) {
+  const inText = new Set(hashtagsIn(desc));
+  const extra = (tags || []).filter((t) => !inText.has(String(t).toLowerCase())).map((t) => '#' + t);
+  return extra.length ? desc.trimEnd() + (desc.trim() ? '
+
+' : '') + extra.join(' ') : desc;
+}
 function hashtagsIn(text) {
   const found = text.match(/#[A-Za-z0-9_]{1,30}/g) || [];
   return [...new Set(found.map((t) => t.slice(1).toLowerCase()))].slice(0, 10);
@@ -875,7 +884,7 @@ async function loadReview() {
     if (!$('rWhoSel').options.length) setupWhoSelect();
     const mine = `&author_id=eq.${review.whoId}`;
     for (let offset = 0; ; offset += 500) {
-      const page = await api(`/rest/v1/posts?select=id,author_id,place_name,description,thumb_path,media_path,media_type,created_at,town,region_code,region,country&status=eq.${review.show}${mine}&order=created_at.desc&limit=500&offset=${offset}`);
+      const page = await api(`/rest/v1/posts?select=id,author_id,place_name,description,hashtags,thumb_path,media_path,media_type,created_at,town,region_code,region,country&status=eq.${review.show}${mine}&order=created_at.desc&limit=500&offset=${offset}`);
       review.rows.push(...page);
       $('rCount').textContent = `Loading… ${review.rows.length}`;
       if (page.length < 500) break;
@@ -1113,7 +1122,7 @@ async function showStory(id) {
   $('vNext').disabled = i >= viewer.list.length - 1;
   $('vWhere').textContent = [[r.town, r.region_code || r.region, r.country].filter(Boolean).join(' • '), new Date(r.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })].filter(Boolean).join(' · ');
   $('vTitle').value = r.place_name || '';
-  $('vDesc').value = r.description || '';
+  $('vDesc').value = withStoredTags(r.description || '', r.hashtags);
   const mine = r.author_id === session.uid;
   $('vTitle').disabled = $('vDesc').disabled = !mine;
   $('vSave').classList.toggle('hidden', !mine);
@@ -1201,7 +1210,7 @@ $('vSave').addEventListener('click', async () => {
   $('vSave').disabled = true;
   try {
     await api(`/rest/v1/posts?id=eq.${r.id}`, { method: 'PATCH', json: { place_name, description, hashtags: hashtagsIn(description || '') } });
-    r.place_name = place_name; r.description = description;
+    r.place_name = place_name; r.description = description; r.hashtags = hashtagsIn(description || '');
     if ($('vBelongs').value) {
       // "Belongs in" was changed too: move it now (and go to the next picture).
       $('vSave').disabled = false;
