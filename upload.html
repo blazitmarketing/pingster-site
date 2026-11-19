@@ -74,6 +74,17 @@
     #review { padding: 16px 20px 110px; }
     .rbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
     .rbar input { max-width: 320px; }
+    .vbelongs { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+    .sggroup { border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin: 0 0 16px; }
+    .sghead { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 10px; }
+    .sghead h3 { margin: 0; font-size: 18px; }
+    .sggrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; }
+    .sgcell { position: relative; border-radius: 8px; overflow: hidden; background: var(--brand-light); aspect-ratio: 1; cursor: pointer; }
+    .sgcell img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .sgcell.off img { opacity: .35; }
+    .sgcell .tick { position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; border-radius: 13px; background: var(--brand); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 800; }
+    .sgcell.off .tick { background: rgba(0,0,0,.45); }
+    .sgcell .cap { position: absolute; left: 0; right: 0; bottom: 0; padding: 4px 6px; background: rgba(0,0,0,.55); color: #fff; font-size: 12px; line-height: 1.3; }
     .groups { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
     .groups button { background: var(--brand-light, #e6f7f2); color: var(--brand-dark, #0d6b57); border-radius: 16px; padding: 5px 12px; font-weight: 600; font-size: 14px; }
     .groups button.on { background: var(--brand); color: #fff; }
@@ -130,6 +141,7 @@
   <nav id="tabs" class="hidden">
     <button class="tab on" data-tab="app">Upload photos</button>
     <button class="tab" data-tab="review">Review stories</button>
+    <button class="tab" data-tab="suggest">Suggested moves</button>
   </nav>
   <span class="who" id="who"></span>
   <button class="alt hidden" id="signOut">Sign out</button>
@@ -183,8 +195,9 @@
 
 <section id="review" class="hidden">
   <div class="rbar">
-    <label for="rWho" style="margin:0">Account</label>
-    <input id="rWho" list="rWhoList" placeholder="@username" style="max-width:180px">
+    <label for="rWhoSel" style="margin:0">Account</label>
+    <select id="rWhoSel" style="max-width:200px"></select>
+    <input id="rWho" class="hidden" list="rWhoList" placeholder="@username" style="max-width:180px">
     <datalist id="rWhoList"></datalist>
     <input id="rFilter" placeholder="Filter by place, town or words">
     <span id="rCount" class="muted"></span>
@@ -204,9 +217,15 @@
   </div>
 </section>
 
+<section id="suggest" class="hidden">
+  <p class="muted" style="margin:0 0 10px">Claude's suggestions for which account each story belongs on: <b>@pingster</b> for special places worth visiting, <b>food</b> for the food account, and <b>@nancy</b> for everyday scenery and personal pictures. Everything is ticked. Untick any that should stay where they are, then click <b>Move the ticked ones</b>. Unticked stories stay put. Moves are recorded and can be moved back.</p>
+  <div id="sgList"></div>
+</section>
+
 <div id="dlg" class="hidden" role="dialog" aria-modal="true">
   <div class="box">
     <p id="dlgText"></p>
+    <select id="dlgSelect" class="hidden" style="width:100%;margin:0 0 12px"></select>
     <input id="dlgInput" class="hidden" list="rWhoList" placeholder="@username">
     <div class="btns"><button class="alt" id="dlgCancel">Cancel</button><button id="dlgOk">Yes</button></div>
   </div>
@@ -228,6 +247,11 @@
     <input id="vTitle" maxlength="120">
     <label for="vDesc">What's the story?</label>
     <textarea id="vDesc" maxlength="2000" style="min-height:140px"></textarea>
+    <div class="vbelongs">
+      <label for="vBelongs" style="margin:0">Belongs in</label>
+      <select id="vBelongs"></select>
+      <button id="vMove">Move</button>
+    </div>
     <div class="vbtns">
       <button id="vSave">Save changes</button>
       <button id="vRemove"></button>
@@ -746,6 +770,21 @@ async function loadAccounts() {
     $('rWhoList').innerHTML = rows.map((r) => `<option value="@${esc(r.username)}">`).join('');
   } catch { /* the box still works by typing */ }
 }
+async function setupWhoSelect() {
+  await loadMyAccounts();
+  const sel = $('rWhoSel');
+  sel.innerHTML = myAccounts.map((a) => `<option value="${esc(a.id)}">@${esc(a.username)}${a.id === session.uid ? ' (you)' : ''}</option>`).join('')
+    + '<option value="__other">Other member…</option>';
+  sel.value = review.whoId || session.uid;
+}
+$('rWhoSel').addEventListener('change', () => {
+  if (review.busy) return;
+  const v = $('rWhoSel').value;
+  $('rWho').classList.toggle('hidden', v !== '__other');
+  if (v === '__other') { $('rWho').focus(); return; }
+  review.whoId = v;
+  loadReview();
+});
 $('rWho').addEventListener('change', async () => {
   if (review.busy) return;
   await loadAccounts();
@@ -755,15 +794,34 @@ $('rWho').addEventListener('change', async () => {
   review.whoId = id;
   loadReview();
 });
+/** Nancy's own accounts (the admin accounts), for the dropdowns: [{id, username}]. */
+let myAccounts = [];
+async function loadMyAccounts() {
+  if (myAccounts.length) return myAccounts;
+  try { myAccounts = await api('/rest/v1/profiles?select=id,username&role=eq.admin&status=eq.active&order=username'); } catch { myAccounts = []; }
+  return myAccounts;
+}
+const nameOf = (id) => myAccounts.find((a) => a.id === id)?.username || [...accounts.entries()].find(([, v]) => v === id)?.[0] || 'another account';
+/** Fills a dropdown with "Leave it here" (optional), Nancy's other accounts, and "Other…". */
+function fillAccountSelect(sel, exceptId, withLeave) {
+  sel.innerHTML = (withLeave ? '<option value="">Leave it here</option>' : '')
+    + myAccounts.filter((a) => a.id !== exceptId).map((a) => `<option value="${esc(a.username)}">@${esc(a.username)}</option>`).join('')
+    + '<option value="__other">Other member…</option>';
+}
 /** Ask for an account name (with suggestions). Resolves to the username, or null. */
 function askAccount(message) {
   $('dlgInput').value = '';
-  $('dlgInput').classList.remove('hidden');
+  fillAccountSelect($('dlgSelect'), review.whoId, false);
+  $('dlgSelect').classList.remove('hidden');
+  $('dlgInput').classList.toggle('hidden', $('dlgSelect').value !== '__other');
+  $('dlgSelect').onchange = () => $('dlgInput').classList.toggle('hidden', $('dlgSelect').value !== '__other');
   const p = dialog(message, 'Move', 'Cancel');
-  setTimeout(() => $('dlgInput').focus(), 0);
   return p.then((ok) => {
+    const v = $('dlgSelect').value;
+    $('dlgSelect').classList.add('hidden');
     $('dlgInput').classList.add('hidden');
-    return ok ? $('dlgInput').value.trim().replace(/^@/, '').toLowerCase() || null : null;
+    if (!ok) return null;
+    return v === '__other' ? $('dlgInput').value.trim().replace(/^@/, '').toLowerCase() || null : v.toLowerCase();
   });
 }
 
@@ -772,7 +830,9 @@ document.querySelectorAll('#tabs .tab').forEach((b) => b.addEventListener('click
   document.querySelectorAll('#tabs .tab').forEach((x) => x.classList.toggle('on', x === b));
   $('app').classList.toggle('hidden', b.dataset.tab !== 'app');
   $('review').classList.toggle('hidden', b.dataset.tab !== 'review');
+  $('suggest').classList.toggle('hidden', b.dataset.tab !== 'suggest');
   if (b.dataset.tab === 'app') map?.invalidateSize();
+  else if (b.dataset.tab === 'suggest') loadSuggestions();
   else if (!review.loaded) loadReview();
 }));
 document.querySelectorAll('[data-show]').forEach((b) => b.addEventListener('click', () => {
@@ -794,6 +854,7 @@ async function loadReview() {
   try {
     if (!review.whoId) review.whoId = session.uid;
     loadAccounts();
+    if (!$('rWhoSel').options.length) setupWhoSelect();
     const mine = `&author_id=eq.${review.whoId}`;
     for (let offset = 0; ; offset += 500) {
       const page = await api(`/rest/v1/posts?select=id,author_id,place_name,description,thumb_path,media_path,media_type,created_at,town,region_code,region,country&status=eq.${review.show}${mine}&order=created_at.desc&limit=500&offset=${offset}`);
@@ -932,7 +993,8 @@ $('selMove').addEventListener('click', async () => {
   const ids = [...review.sel];
   if (!ids.length || review.busy) return;
   await loadAccounts();
-  const to = await askAccount(`Move ${ids.length} ${ids.length === 1 ? 'story' : 'stories'} to which account? Type the username, like @nancy or @pingster.`);
+  await loadMyAccounts();
+  const to = await askAccount(`Move ${ids.length} ${ids.length === 1 ? 'story' : 'stories'} to which account?`);
   if (!to) return;
   const toId = accounts.get(to);
   if (!toId) { tell(`There's no account called @${to}. Check the spelling and try again.`); return; }
@@ -1041,7 +1103,8 @@ async function showStory(id) {
   $('vRemove').textContent = restore ? 'Restore to the app' : mine ? 'Delete for good' : 'Remove from the app';
   $('vRemove').classList.toggle('restore', restore);
   $('vDelete').classList.toggle('hidden', !(restore && mine));
-  $('vMsg').textContent = mine ? '' : 'Someone else posted this, so its words can’t be changed here.';
+  fillAccountSelect($('vBelongs'), r.author_id, true);
+  $('vMsg').textContent = mine ? '' : `Posted by @${nameOf(r.author_id)}, so its words can only be changed when signed in as that account.`;
   $('vMsg').style.color = '';
   $('vPic').classList.remove('zoomed');
   const img = $('vImg');
@@ -1053,6 +1116,33 @@ async function showStory(id) {
     $('vMsg').textContent = 'This is a video: showing its preview picture.';
   }
 }
+$('vMove').addEventListener('click', async () => {
+  let to = $('vBelongs').value;
+  if (!to) return; // Leave it here
+  if (to === '__other') {
+    to = await askAccount('Move this story to which account?');
+    if (!to) return;
+  }
+  const id = viewer.id;
+  $('vMove').disabled = true;
+  try {
+    const n = Number(await rpc('admin_move_posts', { post_ids: [id], to_username: to })) || 0;
+    if (!n) throw new Error('it may already be there, or it is not a live story');
+    const i = viewer.list.indexOf(id);
+    review.rows = review.rows.filter((r) => r.id !== id);
+    review.sel.delete(id);
+    viewer.list.splice(i, 1);
+    renderGrid(); updateSel();
+    if (!viewer.list.length) closeViewer();
+    else {
+      await showStory(viewer.list[Math.min(i, viewer.list.length - 1)]);
+      $('vMsg').textContent = `✓ Moved to @${to}. Showing the next one.`; $('vMsg').style.color = 'var(--brand-dark)';
+    }
+  } catch (e) {
+    $('vMsg').textContent = `Couldn't move it: ${e.message}`; $('vMsg').style.color = 'var(--danger)';
+  }
+  $('vMove').disabled = false;
+});
 function step(d) {
   const i = viewer.list.indexOf(viewer.id) + d;
   if (i >= 0 && i < viewer.list.length) showStory(viewer.list[i]);
@@ -1116,6 +1206,101 @@ async function viewerAct(kind) {
 }
 $('vRemove').addEventListener('click', () => viewerAct(review.show === 'removed' ? 'restore' : 'remove'));
 $('vDelete').addEventListener('click', () => viewerAct('delete'));
+
+// ---------------------------------------------------------------------------
+// Suggested moves: Claude's suggestions, grouped by the account they should move to.
+// Nothing moves until Nancy clicks "Move the ticked ones" (which uses admin_move_posts).
+const sg = { groups: [], off: new Set(), busy: false };
+async function signPaths(paths) {
+  const need = [...new Set(paths.filter((p) => p && !review.urls[p]))];
+  for (let i = 0; i < need.length; i += 100) {
+    try {
+      const got = await api('/storage/v1/object/sign/uploads', { method: 'POST', json: { expiresIn: 3600, paths: need.slice(i, i + 100) } });
+      for (const g of got || []) if (g.signedURL) review.urls[g.path] = `${SUPABASE_URL}/storage/v1${g.signedURL}`;
+    } catch { /* pictures stay blank */ }
+  }
+}
+async function loadSuggestions() {
+  $('sgList').innerHTML = '<p class="muted">Loading suggestions…</p>';
+  await loadMyAccounts(); await loadAccounts();
+  let rows;
+  try {
+    rows = await api('/rest/v1/account_move_suggestions?select=post_id,to_author,reason,posts(id,place_name,thumb_path,media_path,author_id,status)&status=eq.suggested&limit=5000');
+  } catch (e) {
+    $('sgList').innerHTML = `<p class="muted">Couldn't load suggestions (${esc(e.message)}). If it says the table doesn't exist, the phase 23 database step hasn't been run yet.</p>`;
+    return;
+  }
+  // Skip stories already on the suggested account, or no longer live.
+  rows = rows.filter((r) => r.posts && r.posts.status === 'public' && r.posts.author_id !== r.to_author);
+  const by = new Map();
+  for (const r of rows) { if (!by.has(r.to_author)) by.set(r.to_author, []); by.get(r.to_author).push(r); }
+  sg.groups = [...by.entries()].sort((a, b) => b[1].length - a[1].length);
+  sg.off.clear();
+  renderSuggestions();
+  await signPaths(rows.map((r) => r.posts.thumb_path || r.posts.media_path));
+  renderSuggestions();
+}
+function renderSuggestions() {
+  if (!sg.groups.length) { $('sgList').innerHTML = '<p class="muted">No suggested moves waiting. 🎉</p>'; return; }
+  $('sgList').innerHTML = sg.groups.map(([to, list], gi) => {
+    const ticked = list.filter((r) => !sg.off.has(r.post_id)).length;
+    return `<div class="sggroup">
+      <div class="sghead">
+        <h3>Move to @${esc(nameOf(to))}: ${list.length}</h3>
+        <span class="muted">${ticked} ticked</span>
+        <button data-approve="${gi}">Move the ticked ones</button>
+        <button class="alt" data-keepall="${gi}">Keep all where they are</button>
+      </div>
+      <div class="sggrid">${list.map((r) => {
+        const p = r.posts, url = review.urls[p.thumb_path || p.media_path];
+        return `<div class="sgcell${sg.off.has(r.post_id) ? ' off' : ''}" data-post="${r.post_id}" title="${esc([p.place_name, r.reason].filter(Boolean).join(' — '))}">
+          ${url ? `<img src="${esc(url)}" alt="" loading="lazy">` : ''}
+          <span class="tick">${sg.off.has(r.post_id) ? '' : '✓'}</span>
+          <span class="cap">${esc(p.place_name || 'No name')}<br>from @${esc(nameOf(p.author_id))}</span>
+        </div>`;
+      }).join('')}</div>
+    </div>`;
+  }).join('');
+  $('sgList').querySelectorAll('[data-post]').forEach((c) => c.addEventListener('click', () => {
+    const id = c.dataset.post;
+    sg.off.has(id) ? sg.off.delete(id) : sg.off.add(id);
+    renderSuggestions();
+  }));
+  $('sgList').querySelectorAll('[data-approve]').forEach((b) => b.addEventListener('click', () => approveGroup(Number(b.dataset.approve), false)));
+  $('sgList').querySelectorAll('[data-keepall]').forEach((b) => b.addEventListener('click', () => approveGroup(Number(b.dataset.keepall), true)));
+}
+async function markSuggestions(ids, status) {
+  for (let i = 0; i < ids.length; i += 100) {
+    await api(`/rest/v1/account_move_suggestions?post_id=in.(${ids.slice(i, i + 100).join(',')})`, { method: 'PATCH', json: { status } });
+  }
+}
+async function approveGroup(gi, keepAll) {
+  if (sg.busy) return;
+  const [to, list] = sg.groups[gi];
+  const name = nameOf(to);
+  const move = keepAll ? [] : list.filter((r) => !sg.off.has(r.post_id)).map((r) => r.post_id);
+  const keep = list.filter((r) => keepAll || sg.off.has(r.post_id)).map((r) => r.post_id);
+  const question = keepAll
+    ? `Keep all ${list.length} where they are? They won't be suggested again.`
+    : `Move ${move.length} ${move.length === 1 ? 'story' : 'stories'} to @${name}${keep.length ? ` and keep the ${keep.length} unticked where they are` : ''}?`;
+  if (!await ask(question)) return;
+  sg.busy = true;
+  let moved = 0;
+  try {
+    for (let i = 0; i < move.length; i += 200) {
+      moved += Number(await rpc('admin_move_posts', { post_ids: move.slice(i, i + 200), to_username: name })) || 0;
+    }
+    if (move.length) await markSuggestions(move, 'approved');
+    if (keep.length) await markSuggestions(keep, 'kept');
+    sg.groups.splice(gi, 1);
+    review.loaded = false; // the Review tab reloads next time
+    renderSuggestions();
+    tell(keepAll ? `Kept ${keep.length} where they are.` : `Moved ${moved} ${moved === 1 ? 'story' : 'stories'} to @${name}.`);
+  } catch (e) {
+    tell(`Couldn't finish: ${e.message}. Nothing else was changed; try again.`);
+  }
+  sg.busy = false;
+}
 
 // ---------------------------------------------------------------------------
 // Sign in / out. Reloading keeps you signed in; closing the tab signs you out.
