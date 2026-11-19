@@ -33,6 +33,11 @@
     label { display: block; font-size: 13px; font-weight: 700; color: var(--muted); margin: 8px 0 3px; }
     .hidden { display: none !important; }
     .muted { color: var(--muted); }
+    .mstats { display: flex; flex-wrap: wrap; gap: 12px; }
+    .mstat { background: var(--panel); border: 1px solid var(--border, #e3e3e3); border-radius: 12px; padding: 14px 18px; min-width: 130px; }
+    .mnum { font-size: 30px; font-weight: 800; }
+    .mtable { border-collapse: collapse; width: 100%; max-width: 760px; }
+    .mtable th, .mtable td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border, #e3e3e3); }
     .error { color: var(--danger); font-weight: 600; }
 
     #signin { max-width: 380px; margin: 60px auto; padding: 0 16px; }
@@ -145,6 +150,7 @@
     <button class="tab" data-tab="review">Review stories</button>
     <button class="tab" data-tab="suggest">Suggested moves</button>
     <button class="tab" data-tab="cats">Categories</button>
+    <button class="tab" data-tab="members">Members</button>
   </nav>
   <span class="who" id="who"></span>
   <button class="alt hidden" id="signOut">Sign out</button>
@@ -218,6 +224,16 @@
     <button id="selDel" class="hidden"></button>
     <button id="selMove">Move to another account…</button>
   </div>
+</section>
+
+<section id="members" class="hidden">
+  <p class="muted" style="margin:0 0 12px">How many people are on Pingster, and who joined most recently. Updates each time you open this tab (or click Refresh).</p>
+  <div class="mstats" id="mStats"><p class="muted">Loading…</p></div>
+  <div class="sghead" style="margin:16px 0 8px">
+    <b style="flex:1">Newest members</b>
+    <button class="alt" id="mRefresh">Refresh</button>
+  </div>
+  <div id="mList"></div>
 </section>
 
 <section id="cats" class="hidden">
@@ -874,7 +890,9 @@ document.querySelectorAll('#tabs .tab').forEach((b) => b.addEventListener('click
   $('review').classList.toggle('hidden', b.dataset.tab !== 'review');
   $('suggest').classList.toggle('hidden', b.dataset.tab !== 'suggest');
   $('cats').classList.toggle('hidden', b.dataset.tab !== 'cats');
+  $('members').classList.toggle('hidden', b.dataset.tab !== 'members');
   if (b.dataset.tab === 'app') map?.invalidateSize();
+  else if (b.dataset.tab === 'members') loadMembers();
   else if (b.dataset.tab === 'suggest') loadSuggestions();
   else if (b.dataset.tab === 'cats') loadCatSuggestions();
   else if (!review.loaded) loadReview();
@@ -1355,6 +1373,38 @@ async function makeSheets(which) {
 }
 $('sheetsBtn').addEventListener('click', () => makeSheets(1));
 $('sheetsBtn2').addEventListener('click', () => makeSheets(2));
+
+// ---------------------------------------------------------------------------
+// Members: big numbers + the newest sign-ups (supabase/phase32-member-stats.sql). Admins only.
+async function loadMembers() {
+  $('mStats').innerHTML = '<p class="muted">Loading…</p>';
+  $('mList').innerHTML = '';
+  let s, rows;
+  try {
+    [s] = await rpc('admin_member_stats', {});
+    rows = await rpc('admin_newest_members', { max_results: 50 });
+  } catch (e) {
+    $('mStats').innerHTML = `<p class="muted"><b>Couldn't load the member numbers:</b> ${esc(e.message)}. If it says the function doesn't exist, ask Claude for the phase 32 paste.</p>`;
+    return;
+  }
+  const n = (v) => Number(v || 0).toLocaleString();
+  const box = (num, label) => `<div class="mstat"><div class="mnum">${num}</div><div class="muted">${label}</div></div>`;
+  $('mStats').innerHTML = [
+    box(n(s.members), 'members'),
+    box(n(s.new_today), 'joined today'),
+    box(n(s.new_7_days), 'joined this week'),
+    box(n(s.new_30_days), 'joined in 30 days'),
+    box(n(s.passport_waiting), 'want Passport'),
+    box(n(s.lens_waiting), 'want Lens'),
+  ].join('') + (Number(s.banned) ? `<p class="muted" style="width:100%;margin:4px 0 0">${n(s.banned)} banned (not counted).</p>` : '');
+  const when = (d) => new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  $('mList').innerHTML = rows.length
+    ? `<table class="mtable"><tr><th>Member</th><th>Joined</th><th>Live stories</th></tr>${rows
+        .map((r) => `<tr><td><b>@${esc(r.username)}</b>${r.display_name ? ` <span class="muted">${esc(r.display_name)}</span>` : ''}${r.status === 'banned' ? ' <span class="muted">(banned)</span>' : ''}</td><td>${when(r.joined)}</td><td>${n(r.stories)}</td></tr>`)
+        .join('')}</table>`
+    : '<p class="muted">No members yet.</p>';
+}
+$('mRefresh').addEventListener('click', loadMembers);
 
 // ---------------------------------------------------------------------------
 // Categories: Claude's suggestions (category_suggestions), grouped by category. Approving writes
