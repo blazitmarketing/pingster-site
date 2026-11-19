@@ -389,8 +389,22 @@ async function auth(body, grant) {
   // Kept for this tab only, so reloading the page keeps you signed in; closing the tab signs you out.
   try { sessionStorage.setItem(KEEP, JSON.stringify({ refresh_token: session.refresh_token })); } catch { /* private mode: just sign in again */ }
 }
+/** The sign-in ran out (e.g. the tab was open for hours, or another uploader tab took over): back to the sign-in box. */
+function signInAgain() {
+  session = null;
+  forgetSignIn();
+  $('app').classList.add('hidden');
+  $('tabs').classList.add('hidden');
+  $('signOut').classList.add('hidden');
+  $('signin').classList.remove('hidden');
+  $('signinError').textContent = 'Your sign-in ran out (this page was open a long time). Please sign in again.';
+  throw new Error('Please sign in again.');
+}
 async function token() {
-  if (session && Date.now() > session.expires_at) await auth({ refresh_token: session.refresh_token }, 'refresh_token');
+  if (!session) signInAgain();
+  if (Date.now() > session.expires_at) {
+    try { await auth({ refresh_token: session.refresh_token }, 'refresh_token'); } catch { signInAgain(); }
+  }
   return session.access_token;
 }
 async function api(path, opts = {}) {
@@ -399,6 +413,11 @@ async function api(path, opts = {}) {
     headers: { apikey: PUBLISHABLE_KEY, Authorization: `Bearer ${await token()}`, ...(opts.json ? { 'Content-Type': 'application/json' } : {}), ...(opts.headers || {}) },
     body: opts.json ? JSON.stringify(opts.json) : opts.body,
   });
+  // Sign-in expired early (computer asleep, clock change): refresh once and try again.
+  if (res.status === 401 && !opts.retried && session) {
+    session.expires_at = 0;
+    return api(path, { ...opts, retried: true });
+  }
   const text = await res.text();
   let data = null; try { data = text ? JSON.parse(text) : null; } catch { data = text; }
   if (!res.ok) throw new Error((data && (data.message || data.error)) || `error ${res.status}`);
@@ -686,9 +705,7 @@ async function loadTags() {
 function withStoredTags(desc, tags) {
   const inText = new Set(hashtagsIn(desc));
   const extra = (tags || []).filter((t) => !inText.has(String(t).toLowerCase())).map((t) => '#' + t);
-  return extra.length ? desc.trimEnd() + (desc.trim() ? '
-
-' : '') + extra.join(' ') : desc;
+  return extra.length ? desc.trimEnd() + (desc.trim() ? '\n\n' : '') + extra.join(' ') : desc;
 }
 function hashtagsIn(text) {
   const found = text.match(/#[A-Za-z0-9_]{1,30}/g) || [];
@@ -1347,8 +1364,9 @@ async function loadCatSuggestions() {
   $('ctList').innerHTML = '<p class="muted">Loading…</p>';
   try {
     ct.cats = await api('/rest/v1/categories?select=id,name,sort&active=eq.true&order=sort');
-  } catch {
-    $('ctList').innerHTML = '<p class="muted"><b>Categories aren\'t set up in the database yet.</b> Ask Claude for the phase 22 paste (categories), run it in Supabase, then come back here.</p>';
+  } catch (e) {
+    // Show the real reason (this used to always say "not set up", even when the sign-in had run out).
+    $('ctList').innerHTML = `<p class="muted"><b>Couldn't load the categories:</b> ${esc(e.message)}</p>`;
     return;
   }
   let rows = [];
