@@ -113,7 +113,9 @@
     #vSide .vbtns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
     #vRemove { background: var(--danger); }
     #vRemove.restore { background: var(--brand); }
-    #vMsg { font-weight: 600; min-height: 1.5em; }
+    #vMsg { font-weight: 700; min-height: 1.5em; font-size: 16px; border-radius: 8px; }
+    #vMsg.ok { background: var(--brand-light); color: var(--brand-dark); padding: 8px 10px; }
+    #vMsg.bad { background: var(--warn-bg, #FFF4D6); color: var(--danger); padding: 8px 10px; }
     #dlg { position: fixed; inset: 0; z-index: 3000; background: rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center; padding: 16px; }
     #dlg .box { background: var(--bg); color: var(--text); border-radius: 14px; padding: 22px; max-width: 420px; width: 100%; box-shadow: 0 10px 40px rgba(0,0,0,.3); }
     #dlg p { margin: 0 0 16px; font-size: 17px; }
@@ -981,7 +983,7 @@ async function removeOrDelete(r) {
 function updateSel() {
   const n = review.sel.size;
   $('selBar').classList.toggle('hidden', !n);
-  $('selCount').textContent = `${n} selected`;
+  $('selCount').textContent = `${n} ${n === 1 ? 'picture' : 'pictures'} ticked:`;
   const restore = review.show === 'removed';
   // Your own stories are deleted for good; other accounts' stories are hidden (moderation).
   const allMine = review.rows.filter((r) => review.sel.has(r.id)).every((r) => isMine(r));
@@ -1109,7 +1111,7 @@ async function showStory(id) {
   $('vDelete').classList.toggle('hidden', !(restore && mine));
   fillAccountSelect($('vBelongs'), r.author_id, true);
   $('vMsg').textContent = mine ? '' : `Posted by @${nameOf(r.author_id)}, so its words can only be changed when signed in as that account.`;
-  $('vMsg').style.color = '';
+  $('vMsg').style.color = ''; $('vMsg').className = '';
   $('vPic').classList.remove('zoomed');
   const img = $('vImg');
   // Show the small picture straight away, then swap in the full-size one.
@@ -1120,12 +1122,20 @@ async function showStory(id) {
     $('vMsg').textContent = 'This is a video: showing its preview picture.';
   }
 }
-$('vMove').addEventListener('click', async () => {
+/** Shows a clear message in the viewer: kind 'ok' (green box), 'bad' (warning box) or '' (plain). */
+function vSay(text, kind) {
+  $('vMsg').textContent = text;
+  $('vMsg').className = kind || '';
+  $('vMsg').style.color = '';
+}
+$('vMove').addEventListener('click', () => moveCurrent(''));
+/** Moves the picture in the viewer to the account picked in "Belongs in", then shows the next one. */
+async function moveCurrent(savedNote) {
   let to = $('vBelongs').value;
-  if (!to) return; // Leave it here
+  if (!to) return false; // Leave it here
   if (to === '__other') {
     to = await askAccount('Move this story to which account?');
-    if (!to) return;
+    if (!to) return false;
   }
   const id = viewer.id;
   $('vMove').disabled = true;
@@ -1140,13 +1150,16 @@ $('vMove').addEventListener('click', async () => {
     if (!viewer.list.length) closeViewer();
     else {
       await showStory(viewer.list[Math.min(i, viewer.list.length - 1)]);
-      $('vMsg').textContent = `✓ Moved to @${to}. Showing the next one.`; $('vMsg').style.color = 'var(--brand-dark)';
+      vSay(`✓ ${savedNote}Moved to @${to}. Showing the next picture.`, 'ok');
     }
+    $('vMove').disabled = false;
+    return true;
   } catch (e) {
-    $('vMsg').textContent = `Couldn't move it: ${e.message}`; $('vMsg').style.color = 'var(--danger)';
+    vSay(`Not moved: ${e.message}`, 'bad');
   }
   $('vMove').disabled = false;
-});
+  return false;
+}
 function step(d) {
   const i = viewer.list.indexOf(viewer.id) + d;
   if (i >= 0 && i < viewer.list.length) showStory(viewer.list[i]);
@@ -1177,13 +1190,26 @@ $('vSave').addEventListener('click', async () => {
   try {
     await api(`/rest/v1/posts?id=eq.${r.id}`, { method: 'PATCH', json: { place_name, description, hashtags: hashtagsIn(description || '') } });
     r.place_name = place_name; r.description = description;
-    $('vMsg').textContent = '✓ Saved'; $('vMsg').style.color = 'var(--brand-dark)';
+    if ($('vBelongs').value) {
+      // "Belongs in" was changed too: move it now (and go to the next picture).
+      $('vSave').disabled = false;
+      if (await moveCurrent('Saved and ')) return;
+      vSay('✓ Words saved, but NOT moved. Pick the account again and click Move.', 'bad');
+    } else {
+      vSay('✓ Saved', 'ok');
+    }
     const cap = $('grid').querySelector(`[data-id="${r.id}"] .cap`);
     if (cap) { const where = [r.town, r.region_code || r.region].filter(Boolean).join(', '); cap.innerHTML = `${esc(place_name || 'No name')}${where ? `<br>${esc(where)}` : ''}`; }
   } catch (e) {
-    $('vMsg').textContent = `Couldn't save: ${e.message}`; $('vMsg').style.color = 'var(--danger)';
+    vSay(`Couldn't save: ${e.message}`, 'bad');
   }
   $('vSave').disabled = false;
+});
+// Picking an account shows what will happen.
+$('vBelongs').addEventListener('change', () => {
+  const v = $('vBelongs').value;
+  if (!v) vSay('', '');
+  else vSay(`Not moved yet. Click Move (or Save changes) to move it${v === '__other' ? '' : ` to @${v}`}.`, 'bad');
 });
 async function viewerAct(kind) {
   const id = viewer.id;
