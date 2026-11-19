@@ -221,7 +221,7 @@
   <p class="muted" style="margin:0 0 10px">Claude's suggestions for which account each story belongs on: <b>@pingster</b> for special places worth visiting, <b>food</b> for the food account, and <b>@nancy</b> for everyday scenery and personal pictures. Everything is ticked. Untick any that should stay where they are, then click <b>Move the ticked ones</b>. Unticked stories stay put. Moves are recorded and can be moved back.</p>
   <div class="sghead" style="margin:0 0 12px">
     <button class="alt" id="sheetsBtn">Make picture sheets for Claude</button>
-    <span class="muted" id="sheetsMsg">Saves small numbered picture sheets (20 pictures each) plus a list, into a folder you choose, so Claude can look at the pictures and suggest moves. Nothing is uploaded or changed.</span>
+    <span class="muted" id="sheetsMsg">Saves numbered picture sheets (12 pictures each) plus a list, into a folder you choose, so Claude can look at the pictures and suggest moves. Nothing is uploaded or changed.</span>
   </div>
   <div id="sgList"></div>
 </section>
@@ -1224,7 +1224,7 @@ async function signPaths(paths) {
     } catch { /* pictures stay blank */ }
   }
 }
-// Picture sheets for Claude: every live story on Nancy's accounts, 20 small numbered pictures
+// Picture sheets for Claude: every live story on Nancy's accounts, 12 numbered pictures
 // per sheet (sheet-001.jpg …) plus stories.csv (sheet, number, id, account, place, words).
 // Written into a folder she picks (Chrome), or downloaded one by one if the browser can't.
 const csvCell = (v) => `"${String(v ?? '').replace(/"/g, '""').replace(/\s+/g, ' ')}"`;
@@ -1233,7 +1233,7 @@ async function makeSheets() {
   let dir = null;
   if (window.showDirectoryPicker) {
     try { dir = await window.showDirectoryPicker({ mode: 'readwrite' }); } catch { return; } // cancelled
-  } else if (!await ask('This browser will download each sheet separately (about 50 files). Go ahead?')) return;
+  } else if (!await ask('This browser will download each sheet separately (about 85 files). Go ahead?')) return;
   btn.disabled = true;
   try {
     await loadMyAccounts();
@@ -1254,7 +1254,7 @@ async function makeSheets() {
         await sleep(400);
       }
     };
-    const COLS = 5, ROWS = 4, T = 200, PER = COLS * ROWS;
+    const COLS = 4, ROWS = 3, T = 300, PER = COLS * ROWS;
     const lines = ['sheet,number,id,account,place,town,state,country,hashtags,description'];
     for (let i = 0; i < posts.length; i += PER) {
       const chunk = posts.slice(i, i + PER);
@@ -1273,8 +1273,8 @@ async function makeSheets() {
           g.save(); g.beginPath(); g.rect(x, y, T, T); g.clip();
           g.drawImage(bmp, x + (T - w) / 2, y + (T - h) / 2, w, h); g.restore();
         } catch { /* blank tile */ }
-        g.fillStyle = 'rgba(0,0,0,.7)'; g.fillRect(x, y, 34, 26);
-        g.fillStyle = '#fff'; g.font = 'bold 18px sans-serif'; g.fillText(String(k + 1), x + 5, y + 19);
+        g.fillStyle = 'rgba(0,0,0,.75)'; g.fillRect(x, y, 48, 36);
+        g.fillStyle = '#fff'; g.font = 'bold 26px sans-serif'; g.fillText(String(k + 1), x + 7, y + 27);
         g.strokeStyle = '#fff'; g.lineWidth = 2; g.strokeRect(x, y, T, T);
         lines.push([sheetNo, k + 1, p.id, nameOf(p.author_id), p.place_name, p.town, p.region_code || p.region, p.country,
           (p.hashtags || []).join(' '), (p.description || '').slice(0, 200)].map(csvCell).join(','));
