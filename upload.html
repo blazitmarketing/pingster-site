@@ -74,6 +74,10 @@
     #review { padding: 16px 20px 110px; }
     .rbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
     .rbar input { max-width: 320px; }
+    .groups { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
+    .groups button { background: var(--brand-light, #e6f7f2); color: var(--brand-dark, #0d6b57); border-radius: 16px; padding: 5px 12px; font-weight: 600; font-size: 14px; }
+    .groups button.on { background: var(--brand); color: #fff; }
+    .groups .sub { font-weight: 500; }
     .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
     .seg button { background: none; color: var(--text); border-radius: 0; padding: 8px 12px; font-weight: 600; }
     .seg button.on { background: var(--brand); color: #fff; }
@@ -184,8 +188,11 @@
     <datalist id="rWhoList"></datalist>
     <input id="rFilter" placeholder="Filter by place, town or words">
     <span id="rCount" class="muted"></span>
+    <button class="alt" id="selAll">Select all shown</button>
   </div>
   <p class="muted" style="margin:0 0 10px">Shows your stories, or type another account (like @pingster) in the Account box. Click a picture to see it big (and fix its name or story, or delete it). To delete or move several at once, click the circle in each picture's corner, then use the buttons at the bottom. Deleting your own story erases it and its picture for good.</p>
+  <div class="groups" id="rPlaces"></div>
+  <div class="groups" id="rTowns"></div>
   <div id="grid"></div>
   <p id="rMore" class="muted"></p>
   <div id="selBar" class="hidden">
@@ -782,6 +789,7 @@ $('rFilter').addEventListener('input', () => renderGrid());
 
 async function loadReview() {
   review.loaded = true; review.rows = []; review.sel.clear(); updateSel();
+  review.place = null; review.town = null;
   $('grid').innerHTML = ''; $('rCount').textContent = 'Loading…';
   try {
     if (!review.whoId) review.whoId = session.uid;
@@ -797,13 +805,55 @@ async function loadReview() {
   renderGrid();
 }
 
-function visibleRows() {
+// Place groups: US stories by state, everything else by country, then by town (same rules as the app).
+const US = new Set(['united states', 'united states of america', 'usa', 'us']);
+function placeOf(r) {
+  const country = (r.country || '').trim();
+  if (US.has(country.toLowerCase())) return r.region || r.region_code || 'United States';
+  return country || 'Other places';
+}
+const townOf = (r) => (r.town || '').trim() || 'Other';
+function filteredByWords() {
   const q = $('rFilter').value.trim().toLowerCase();
   if (!q) return review.rows;
   return review.rows.filter((r) => [r.place_name, r.description, r.town, r.region, r.region_code, r.country].some((v) => (v || '').toLowerCase().includes(q)));
 }
+function visibleRows() {
+  return filteredByWords().filter((r) => (!review.place || placeOf(r) === review.place) && (!review.town || townOf(r) === review.town));
+}
+/** Counts per group, biggest first: [[name, count], ...]. */
+function countBy(rows, key) {
+  const m = new Map();
+  for (const r of rows) m.set(key(r), (m.get(key(r)) || 0) + 1);
+  return [...m.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+}
+function renderGroups() {
+  const words = filteredByWords();
+  const places = countBy(words, placeOf);
+  const chip = (label, n, on, data) => `<button class="${on ? 'on' : ''}" ${data}>${esc(label)} <span class="sub">(${n})</span></button>`;
+  $('rPlaces').innerHTML = places.length > 1 || review.place
+    ? chip('All', words.length, !review.place, 'data-place=""') + places.map(([p, n]) => chip(p, n, review.place === p, `data-place="${esc(p)}"`)).join('')
+    : '';
+  const inPlace = review.place ? words.filter((r) => placeOf(r) === review.place) : [];
+  const towns = review.place ? countBy(inPlace, townOf) : [];
+  $('rTowns').innerHTML = towns.length > 1 || review.town
+    ? chip(`All of ${review.place}`, inPlace.length, !review.town, 'data-town=""') + towns.map(([t, n]) => chip(t, n, review.town === t, `data-town="${esc(t)}"`)).join('')
+    : '';
+  $('rPlaces').querySelectorAll('[data-place]').forEach((b) => b.addEventListener('click', () => {
+    review.place = b.dataset.place || null; review.town = null; renderGrid();
+  }));
+  $('rTowns').querySelectorAll('[data-town]').forEach((b) => b.addEventListener('click', () => {
+    review.town = b.dataset.town || null; renderGrid();
+  }));
+}
+$('selAll').addEventListener('click', () => {
+  if (review.busy) return;
+  for (const r of visibleRows()) review.sel.add(r.id);
+  renderGrid(); updateSel();
+});
 
 function renderGrid() {
+  renderGroups();
   const rows = visibleRows();
   const label = review.show === 'public' ? 'live' : 'removed';
   $('rCount').textContent = `${rows.length}${rows.length !== review.rows.length ? ` of ${review.rows.length}` : ''} ${label} ${review.rows.length === 1 ? 'story' : 'stories'}`;
