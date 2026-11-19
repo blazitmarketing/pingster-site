@@ -144,6 +144,7 @@
     <button class="tab on" data-tab="app">Upload photos</button>
     <button class="tab" data-tab="review">Review stories</button>
     <button class="tab" data-tab="suggest">Suggested moves</button>
+    <button class="tab" data-tab="cats">Categories</button>
   </nav>
   <span class="who" id="who"></span>
   <button class="alt hidden" id="signOut">Sign out</button>
@@ -217,6 +218,15 @@
     <button id="selDel" class="hidden"></button>
     <button id="selMove">Move to another account…</button>
   </div>
+</section>
+
+<section id="cats" class="hidden">
+  <p class="muted" style="margin:0 0 10px">Claude's suggested categories for your stories, grouped by category. Everything is ticked. Click a picture to untick it (or tick it again), or click <b>Change</b> under it to pick its categories yourself (up to 3). Then click <b>Approve the ticked ones</b>. Only approved categories show in the app. Unticked ones are dropped.</p>
+  <div class="sghead" style="margin:0 0 12px">
+    <button class="alt" id="sheetsBtn2">Make picture sheets for Claude</button>
+    <span class="muted" id="sheetsMsg2">Step 1 (once): saves numbered picture sheets into a folder you pick (Pingster-2026 → sorting), so Claude can look at your pictures.</span>
+  </div>
+  <div id="ctList"></div>
 </section>
 
 <section id="suggest" class="hidden">
@@ -837,8 +847,10 @@ document.querySelectorAll('#tabs .tab').forEach((b) => b.addEventListener('click
   $('app').classList.toggle('hidden', b.dataset.tab !== 'app');
   $('review').classList.toggle('hidden', b.dataset.tab !== 'review');
   $('suggest').classList.toggle('hidden', b.dataset.tab !== 'suggest');
+  $('cats').classList.toggle('hidden', b.dataset.tab !== 'cats');
   if (b.dataset.tab === 'app') map?.invalidateSize();
   else if (b.dataset.tab === 'suggest') loadSuggestions();
+  else if (b.dataset.tab === 'cats') loadCatSuggestions();
   else if (!review.loaded) loadReview();
 }));
 document.querySelectorAll('[data-show]').forEach((b) => b.addEventListener('click', () => {
@@ -1254,8 +1266,8 @@ async function signPaths(paths) {
 // per sheet (sheet-001.jpg …) plus stories.csv (sheet, number, id, account, place, words).
 // Written into a folder she picks (Chrome), or downloaded one by one if the browser can't.
 const csvCell = (v) => `"${String(v ?? '').replace(/"/g, '""').replace(/\s+/g, ' ')}"`;
-async function makeSheets() {
-  const btn = $('sheetsBtn'), msg = $('sheetsMsg');
+async function makeSheets(which) {
+  const btn = $(which === 2 ? 'sheetsBtn2' : 'sheetsBtn'), msg = $(which === 2 ? 'sheetsMsg2' : 'sheetsMsg');
   let dir = null;
   if (window.showDirectoryPicker) {
     try { dir = await window.showDirectoryPicker({ mode: 'readwrite' }); } catch { return; } // cancelled
@@ -1315,7 +1327,126 @@ async function makeSheets() {
   }
   btn.disabled = false;
 }
-$('sheetsBtn').addEventListener('click', makeSheets);
+$('sheetsBtn').addEventListener('click', () => makeSheets(1));
+$('sheetsBtn2').addEventListener('click', () => makeSheets(2));
+
+// ---------------------------------------------------------------------------
+// Categories: Claude's suggestions (category_suggestions), grouped by category. Approving writes
+// them to post_categories (what the app shows). Nothing shows in the app until approved.
+const ct = { cats: [], groups: [], off: new Set(), busy: false }; // off: "postId:catId" unticked
+async function loadCatSuggestions() {
+  $('ctList').innerHTML = '<p class="muted">Loading…</p>';
+  try {
+    ct.cats = await api('/rest/v1/categories?select=id,name,sort&active=eq.true&order=sort');
+  } catch {
+    $('ctList').innerHTML = '<p class="muted"><b>Categories aren\'t set up in the database yet.</b> Ask Claude for the phase 22 paste (categories), run it in Supabase, then come back here.</p>';
+    return;
+  }
+  let rows = [];
+  try {
+    for (let offset = 0; ; offset += 1000) {
+      const page = await api(`/rest/v1/category_suggestions?select=post_id,category_id,posts(id,place_name,thumb_path,media_path,status)&status=eq.suggested&limit=1000&offset=${offset}`);
+      rows.push(...page);
+      if (page.length < 1000) break;
+    }
+  } catch (e) {
+    $('ctList').innerHTML = `<p class="muted">Couldn't load suggestions: ${esc(e.message)}</p>`;
+    return;
+  }
+  rows = rows.filter((r) => r.posts && r.posts.status === 'public');
+  const by = new Map(ct.cats.map((c) => [c.id, []]));
+  for (const r of rows) by.get(r.category_id)?.push(r);
+  ct.groups = [...by.entries()].filter(([, l]) => l.length);
+  ct.off.clear();
+  renderCats();
+  await signPaths(rows.map((r) => r.posts.thumb_path || r.posts.media_path));
+  renderCats();
+}
+const catName = (id) => ct.cats.find((c) => c.id === id)?.name || 'Category';
+function renderCats() {
+  if (!ct.groups.length) {
+    $('ctList').innerHTML = '<p class="muted">No category suggestions waiting. If you haven\'t yet, click <b>Make picture sheets for Claude</b> above and tell Claude they\'re ready.</p>';
+    return;
+  }
+  $('ctList').innerHTML = ct.groups.map(([cid, list], gi) => {
+    const ticked = list.filter((r) => !ct.off.has(`${r.post_id}:${cid}`)).length;
+    return `<div class="sggroup">
+      <div class="sghead">
+        <h3>${esc(catName(cid))}: ${list.length}</h3>
+        <span class="muted">${ticked} ticked</span>
+        <button data-capprove="${gi}">Approve the ticked ones</button>
+      </div>
+      <div class="sggrid">${list.map((r) => {
+        const p = r.posts, key = `${r.post_id}:${cid}`, url = review.urls[p.thumb_path || p.media_path];
+        return `<div><div class="sgcell${ct.off.has(key) ? ' off' : ''}" data-ckey="${key}" title="${esc(p.place_name || '')}">
+          ${url ? `<img src="${esc(url)}" alt="" loading="lazy">` : ''}
+          <span class="tick">${ct.off.has(key) ? '' : '✓'}</span>
+          <span class="cap">${esc(p.place_name || 'No name')}</span>
+        </div><button class="link" data-cchange="${r.post_id}">Change</button></div>`;
+      }).join('')}</div>
+    </div>`;
+  }).join('');
+  $('ctList').querySelectorAll('[data-ckey]').forEach((c) => c.addEventListener('click', () => {
+    const k = c.dataset.ckey;
+    ct.off.has(k) ? ct.off.delete(k) : ct.off.add(k);
+    renderCats();
+  }));
+  $('ctList').querySelectorAll('[data-capprove]').forEach((b) => b.addEventListener('click', () => approveCats(Number(b.dataset.capprove))));
+  $('ctList').querySelectorAll('[data-cchange]').forEach((b) => b.addEventListener('click', () => changeCats(b.dataset.cchange)));
+}
+/** Pick a story's categories yourself (up to 3): replaces its suggestions. */
+async function changeCats(postId) {
+  const current = new Set(ct.groups.filter(([, l]) => l.some((r) => r.post_id === postId)).map(([cid]) => cid));
+  const box = document.createElement('div');
+  box.innerHTML = ct.cats.map((c) => `<label style="display:inline-flex;gap:4px;margin:0 10px 6px 0;font-weight:500"><input type="checkbox" value="${c.id}" ${current.has(c.id) ? 'checked' : ''}>${esc(c.name)}</label>`).join('');
+  $('dlgText').after(box);
+  const ok = await dialog('Which categories fit this picture? (up to 3)', 'Save', 'Cancel');
+  const picked = [...box.querySelectorAll('input:checked')].map((i) => Number(i.value));
+  box.remove();
+  if (!ok) return;
+  if (picked.length > 3) { tell('Up to 3 categories. Please pick again.'); return; }
+  try {
+    await api(`/rest/v1/category_suggestions?post_id=eq.${postId}&status=eq.suggested`, { method: 'DELETE' });
+    if (picked.length) await api('/rest/v1/category_suggestions', { method: 'POST', json: picked.map((category_id) => ({ post_id: postId, category_id, source: 'nancy' })), headers: { Prefer: 'resolution=merge-duplicates' } });
+    await loadCatSuggestions();
+  } catch (e) { tell(`Couldn't change it: ${e.message}`); }
+}
+async function approveCats(gi) {
+  if (ct.busy) return;
+  const [cid, list] = ct.groups[gi];
+  const yes = list.filter((r) => !ct.off.has(`${r.post_id}:${cid}`)).map((r) => r.post_id);
+  const no = list.filter((r) => ct.off.has(`${r.post_id}:${cid}`)).map((r) => r.post_id);
+  if (!await ask(`Approve ${catName(cid)} for ${yes.length} ${yes.length === 1 ? 'story' : 'stories'}${no.length ? ` and drop the ${no.length} unticked` : ''}?`)) return;
+  ct.busy = true;
+  let full = 0;
+  try {
+    for (let i = 0; i < yes.length; i += 100) {
+      const batch = yes.slice(i, i + 100);
+      try {
+        await api('/rest/v1/post_categories?on_conflict=post_id,category_id', { method: 'POST', json: batch.map((post_id) => ({ post_id, category_id: cid })), headers: { Prefer: 'resolution=ignore-duplicates' } });
+      } catch {
+        // One story already has 3 categories: add the rest one by one.
+        for (const post_id of batch) {
+          try { await api('/rest/v1/post_categories?on_conflict=post_id,category_id', { method: 'POST', json: [{ post_id, category_id: cid }], headers: { Prefer: 'resolution=ignore-duplicates' } }); }
+          catch { full++; }
+        }
+      }
+    }
+    const mark = async (ids, status) => {
+      for (let i = 0; i < ids.length; i += 100) {
+        await api(`/rest/v1/category_suggestions?category_id=eq.${cid}&post_id=in.(${ids.slice(i, i + 100).join(',')})`, { method: 'PATCH', json: { status } });
+      }
+    };
+    if (yes.length) await mark(yes, 'approved');
+    if (no.length) await mark(no, 'rejected');
+    ct.groups.splice(gi, 1);
+    renderCats();
+    tell(`Approved ${catName(cid)} for ${yes.length - full} ${yes.length - full === 1 ? 'story' : 'stories'}.${full ? ` ${full} already had 3 categories, so they were skipped.` : ''}`);
+  } catch (e) {
+    tell(`Couldn't finish: ${e.message}. Try again.`);
+  }
+  ct.busy = false;
+}
 async function loadSuggestions() {
   $('sgList').innerHTML = '<p class="muted">Loading suggestions…</p>';
   await loadMyAccounts(); await loadAccounts();
