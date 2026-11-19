@@ -109,6 +109,8 @@
     #selAct { background: var(--danger); }
     #selAct.restore { background: var(--brand); }
     #selDel, #vDelete { background: var(--danger); }
+    #selMove { background: var(--brand); }
+    #dlgInput { width: 100%; margin: 0 0 12px; }
 
     @media (max-width: 800px) {
       #app { grid-template-columns: 1fr; height: auto; }
@@ -177,10 +179,13 @@
 
 <section id="review" class="hidden">
   <div class="rbar">
+    <label for="rWho" style="margin:0">Account</label>
+    <input id="rWho" list="rWhoList" placeholder="@username" style="max-width:180px">
+    <datalist id="rWhoList"></datalist>
     <input id="rFilter" placeholder="Filter by place, town or words">
     <span id="rCount" class="muted"></span>
   </div>
-  <p class="muted" style="margin:0 0 10px">Your stories. Click a picture to see it big (and fix its name or story, or delete it). To delete several at once, click the circle in each picture's corner. Deleting erases the story and its picture for good.</p>
+  <p class="muted" style="margin:0 0 10px">Shows your stories, or type another account (like @pingster) in the Account box. Click a picture to see it big (and fix its name or story, or delete it). To delete or move several at once, click the circle in each picture's corner, then use the buttons at the bottom. Deleting your own story erases it and its picture for good.</p>
   <div id="grid"></div>
   <p id="rMore" class="muted"></p>
   <div id="selBar" class="hidden">
@@ -188,12 +193,14 @@
     <button class="alt" id="selNone">Unselect all</button>
     <button id="selAct"></button>
     <button id="selDel" class="hidden"></button>
+    <button id="selMove">Move to another account…</button>
   </div>
 </section>
 
 <div id="dlg" class="hidden" role="dialog" aria-modal="true">
   <div class="box">
     <p id="dlgText"></p>
+    <input id="dlgInput" class="hidden" list="rWhoList" placeholder="@username">
     <div class="btns"><button class="alt" id="dlgCancel">Cancel</button><button id="dlgOk">Yes</button></div>
   </div>
 </div>
@@ -721,7 +728,37 @@ drop.addEventListener('drop', async (e) => {
 // ---------------------------------------------------------------------------
 // Review stories: a picture grid of stories; select some and remove (hide) or restore them.
 // Review shows only your own live stories; deleting one erases it and its pictures for good.
-const review = { show: 'public', who: 'me', rows: [], urls: {}, sel: new Set(), loaded: false, busy: false };
+const review = { show: 'public', who: 'me', whoId: null, rows: [], urls: {}, sel: new Set(), loaded: false, busy: false };
+/** username -> id, for the Account box and "Move to…" (admins can see all usernames). */
+const accounts = new Map();
+async function loadAccounts() {
+  if (accounts.size) return;
+  try {
+    const rows = await api('/rest/v1/profiles?select=id,username&status=eq.active&order=username&limit=5000');
+    for (const r of rows) accounts.set(String(r.username).toLowerCase(), r.id);
+    $('rWhoList').innerHTML = rows.map((r) => `<option value="@${esc(r.username)}">`).join('');
+  } catch { /* the box still works by typing */ }
+}
+$('rWho').addEventListener('change', async () => {
+  if (review.busy) return;
+  await loadAccounts();
+  const name = $('rWho').value.trim().replace(/^@/, '').toLowerCase();
+  const id = name ? accounts.get(name) : session.uid;
+  if (!id) { tell(`There's no account called @${name}.`); return; }
+  review.whoId = id;
+  loadReview();
+});
+/** Ask for an account name (with suggestions). Resolves to the username, or null. */
+function askAccount(message) {
+  $('dlgInput').value = '';
+  $('dlgInput').classList.remove('hidden');
+  const p = dialog(message, 'Move', 'Cancel');
+  setTimeout(() => $('dlgInput').focus(), 0);
+  return p.then((ok) => {
+    $('dlgInput').classList.add('hidden');
+    return ok ? $('dlgInput').value.trim().replace(/^@/, '').toLowerCase() || null : null;
+  });
+}
 
 document.querySelectorAll('#tabs .tab').forEach((b) => b.addEventListener('click', () => {
   if (uploading && b.dataset.tab === 'review') { tell('Photos are still uploading. Switch when they finish.'); return; }
@@ -747,7 +784,9 @@ async function loadReview() {
   review.loaded = true; review.rows = []; review.sel.clear(); updateSel();
   $('grid').innerHTML = ''; $('rCount').textContent = 'Loading…';
   try {
-    const mine = review.who === 'me' ? `&author_id=eq.${session.uid}` : '';
+    if (!review.whoId) review.whoId = session.uid;
+    loadAccounts();
+    const mine = `&author_id=eq.${review.whoId}`;
     for (let offset = 0; ; offset += 500) {
       const page = await api(`/rest/v1/posts?select=id,author_id,place_name,description,thumb_path,media_path,media_type,created_at,town,region_code,region,country&status=eq.${review.show}${mine}&order=created_at.desc&limit=500&offset=${offset}`);
       review.rows.push(...page);
@@ -829,13 +868,40 @@ function updateSel() {
   $('selBar').classList.toggle('hidden', !n);
   $('selCount').textContent = `${n} selected`;
   const restore = review.show === 'removed';
-  $('selAct').textContent = restore ? `Restore ${n}` : `Delete ${n} for good`;
+  // Your own stories are deleted for good; other accounts' stories are hidden (moderation).
+  const allMine = review.rows.filter((r) => review.sel.has(r.id)).every((r) => isMine(r));
+  $('selAct').textContent = restore ? `Restore ${n}` : allMine ? `Delete ${n} for good` : `Remove ${n} from the app`;
+  $('selMove').textContent = `Move ${n} to another account…`;
   $('selAct').classList.toggle('restore', restore);
   // In the Removed list, your own stories can also be deleted for good.
   const mineSel = review.rows.filter((r) => review.sel.has(r.id) && isMine(r)).length;
   $('selDel').classList.toggle('hidden', !restore || !mineSel);
   $('selDel').textContent = `Delete ${mineSel} of mine for good`;
 }
+$('selMove').addEventListener('click', async () => {
+  const ids = [...review.sel];
+  if (!ids.length || review.busy) return;
+  await loadAccounts();
+  const to = await askAccount(`Move ${ids.length} ${ids.length === 1 ? 'story' : 'stories'} to which account? Type the username, like @nancy or @pingster.`);
+  if (!to) return;
+  const toId = accounts.get(to);
+  if (!toId) { tell(`There's no account called @${to}. Check the spelling and try again.`); return; }
+  if (toId === review.whoId) { tell(`These stories are already on @${to}.`); return; }
+  review.busy = true; $('selMove').disabled = true;
+  let moved = 0, failed = false;
+  for (let i = 0; i < ids.length; i += 200) {
+    $('selCount').textContent = `Moving ${Math.min(i + 200, ids.length)} of ${ids.length}…`;
+    try { moved += Number(await rpc('admin_move_posts', { post_ids: ids.slice(i, i + 200), to_username: to })) || 0; }
+    catch (e) { failed = true; tell(`Couldn't move them: ${e.message}`); break; }
+  }
+  if (moved || !failed) {
+    review.rows = review.rows.filter((r) => !review.sel.has(r.id));
+    review.sel.clear();
+  }
+  review.busy = false; $('selMove').disabled = false;
+  renderGrid(); updateSel();
+  if (!failed) tell(`Moved ${moved} ${moved === 1 ? 'story' : 'stories'} to @${to}.`);
+});
 $('selDel').addEventListener('click', async () => {
   const rows = review.rows.filter((r) => review.sel.has(r.id) && isMine(r));
   if (!rows.length) return;
