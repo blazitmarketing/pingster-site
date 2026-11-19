@@ -219,6 +219,10 @@
 
 <section id="suggest" class="hidden">
   <p class="muted" style="margin:0 0 10px">Claude's suggestions for which account each story belongs on: <b>@pingster</b> for special places worth visiting, <b>food</b> for the food account, and <b>@nancy</b> for everyday scenery and personal pictures. Everything is ticked. Untick any that should stay where they are, then click <b>Move the ticked ones</b>. Unticked stories stay put. Moves are recorded and can be moved back.</p>
+  <div class="sghead" style="margin:0 0 12px">
+    <button class="alt" id="sheetsBtn">Make picture sheets for Claude</button>
+    <span class="muted" id="sheetsMsg">Saves small numbered picture sheets (20 pictures each) plus a list, into a folder you choose, so Claude can look at the pictures and suggest moves. Nothing is uploaded or changed.</span>
+  </div>
   <div id="sgList"></div>
 </section>
 
@@ -1220,6 +1224,72 @@ async function signPaths(paths) {
     } catch { /* pictures stay blank */ }
   }
 }
+// Picture sheets for Claude: every live story on Nancy's accounts, 20 small numbered pictures
+// per sheet (sheet-001.jpg …) plus stories.csv (sheet, number, id, account, place, words).
+// Written into a folder she picks (Chrome), or downloaded one by one if the browser can't.
+const csvCell = (v) => `"${String(v ?? '').replace(/"/g, '""').replace(/\s+/g, ' ')}"`;
+async function makeSheets() {
+  const btn = $('sheetsBtn'), msg = $('sheetsMsg');
+  let dir = null;
+  if (window.showDirectoryPicker) {
+    try { dir = await window.showDirectoryPicker({ mode: 'readwrite' }); } catch { return; } // cancelled
+  } else if (!await ask('This browser will download each sheet separately (about 50 files). Go ahead?')) return;
+  btn.disabled = true;
+  try {
+    await loadMyAccounts();
+    const ids = myAccounts.map((a) => a.id);
+    const posts = [];
+    for (let offset = 0; ; offset += 500) {
+      msg.textContent = `Listing stories… ${posts.length}`;
+      const page = await api(`/rest/v1/posts?select=id,author_id,place_name,description,hashtags,town,region,region_code,country,thumb_path,media_path,media_type&status=eq.public&author_id=in.(${ids.join(',')})&order=created_at.asc&limit=500&offset=${offset}`);
+      posts.push(...page);
+      if (page.length < 500) break;
+    }
+    const save = async (name, blob) => {
+      if (dir) {
+        const fh = await dir.getFileHandle(name, { create: true });
+        const w = await fh.createWritable(); await w.write(blob); await w.close();
+      } else {
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click();
+        await sleep(400);
+      }
+    };
+    const COLS = 5, ROWS = 4, T = 200, PER = COLS * ROWS;
+    const lines = ['sheet,number,id,account,place,town,state,country,hashtags,description'];
+    for (let i = 0; i < posts.length; i += PER) {
+      const chunk = posts.slice(i, i + PER);
+      const sheetNo = String(i / PER + 1).padStart(3, '0');
+      msg.textContent = `Making sheet ${sheetNo} of ${String(Math.ceil(posts.length / PER)).padStart(3, '0')}…`;
+      await signPaths(chunk.map((p) => p.thumb_path || p.media_path));
+      const c = document.createElement('canvas'); c.width = COLS * T; c.height = ROWS * T;
+      const g = c.getContext('2d'); g.fillStyle = '#ddd'; g.fillRect(0, 0, c.width, c.height);
+      for (const [k, p] of chunk.entries()) {
+        const x = (k % COLS) * T, y = Math.floor(k / COLS) * T;
+        const url = review.urls[p.thumb_path || p.media_path];
+        try {
+          const bmp = await createImageBitmap(await (await fetch(url)).blob());
+          const sc = Math.max(T / bmp.width, T / bmp.height);
+          const w = bmp.width * sc, h = bmp.height * sc;
+          g.save(); g.beginPath(); g.rect(x, y, T, T); g.clip();
+          g.drawImage(bmp, x + (T - w) / 2, y + (T - h) / 2, w, h); g.restore();
+        } catch { /* blank tile */ }
+        g.fillStyle = 'rgba(0,0,0,.7)'; g.fillRect(x, y, 34, 26);
+        g.fillStyle = '#fff'; g.font = 'bold 18px sans-serif'; g.fillText(String(k + 1), x + 5, y + 19);
+        g.strokeStyle = '#fff'; g.lineWidth = 2; g.strokeRect(x, y, T, T);
+        lines.push([sheetNo, k + 1, p.id, nameOf(p.author_id), p.place_name, p.town, p.region_code || p.region, p.country,
+          (p.hashtags || []).join(' '), (p.description || '').slice(0, 200)].map(csvCell).join(','));
+      }
+      const blob = await new Promise((res) => c.toBlob(res, 'image/jpeg', 0.75));
+      await save(`sheet-${sheetNo}.jpg`, blob);
+    }
+    await save('stories.csv', new Blob([lines.join('\n')], { type: 'text/csv' }));
+    msg.textContent = `Done: ${Math.ceil(posts.length / PER)} sheets for ${posts.length} stories, plus stories.csv. Tell Claude they're ready.`;
+  } catch (e) {
+    msg.textContent = `Couldn't finish: ${e.message}`;
+  }
+  btn.disabled = false;
+}
+$('sheetsBtn').addEventListener('click', makeSheets);
 async function loadSuggestions() {
   $('sgList').innerHTML = '<p class="muted">Loading suggestions…</p>';
   await loadMyAccounts(); await loadAccounts();
